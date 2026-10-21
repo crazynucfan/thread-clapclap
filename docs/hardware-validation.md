@@ -242,3 +242,28 @@ Do not include Thread credentials or device storage.
 - After the final capture, live diagnostics again showed retained commissioning,
   router role, zero DMA overflows, and a maximum processed-batch time of 3,922us
   over that observation. This is an observed maximum, not a real-time guarantee.
+
+### 2026-10-21: labelled positive and interference captures
+
+- A controlled 60-second capture contained one requested double clap. All
+  7,500 frames passed integrity checks. The on-board burst detector reported
+  one pair and native replay agreed exactly. The prior hard-gated detector
+  reported zero pairs on the same frames.
+- The two accepted bursts scored 0.984 and 0.925. The second peak frame had
+  high-band ratio about 0.116, flatness about 0.053, and 17 significant bins;
+  the burst detector used earlier attack evidence to retain the clap. These
+  scores are weighted features, not probabilities or an accuracy estimate.
+- A separate controlled 60-second no-clap session included ordinary speech
+  and keyboard/desk taps. Both detectors produced one false pair. All 7,500
+  frames were complete and replay matched the on-board count. Matter actions
+  were suppressed throughout both captures, so no lamp action or delivered
+  Home Assistant event is claimed from this test.
+- The operator considers typing the likely source of the false trigger and
+  confirmed that typing will not occur in the installation room. The capture
+  does not independently distinguish speech from individual taps. It remains
+  a useful stress negative, not a measurement of expected room background.
+- No score threshold was changed to fit these two sessions. Installation-room
+  tests should cover normal clap distances and relevant background sounds.
+  One successful positive plus one failed stress negative does not establish
+  repeatability or a false-trigger rate. Real feature captures remain private
+  under the ignored local directory.

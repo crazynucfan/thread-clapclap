@@ -10,9 +10,10 @@ router eligibility to let the device help relay mesh traffic.
 **3.3.12**. All **73 automated checks** pass: 62 native C++ checks (including
 45 retained legacy checks) and eleven capture/replay checks. Earlier firmware
 was commissioned into Home Assistant, became a Thread router, and delivered
-physical double-clap events, but subsequent trials frequently missed. The new
-classifier and feature-capture workflow address that failure; real-room
-recognition and false-trigger rates still need labelled validation. This is
+physical double-clap events, but subsequent trials frequently missed. A labelled physical pair passed the new classifier and was missed by the old
+one on the same captured frames. A separate speech/tapping stress trial
+produced one false trigger with each classifier. Installation-room recognition
+and false-trigger rates still need validation. This is
 an MIT-licensed community prototype, not a certified Matter product.
 
 ## 1. Connect the hardware
