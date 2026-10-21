@@ -18,6 +18,7 @@ Do not include Thread credentials or device storage.
 - [x] Commissioning into Home Assistant joins the existing Thread network.
 - [ ] The Generic Switch event entity appears and updates in Home Assistant.
 - [x] Serial output reports router eligibility and the actual Thread role.
+- [x] Thread automatically promotes the attached board from child to router.
 - [ ] Unplug/replug retains pairing and the automation still works.
 - [ ] Events during a network outage are discarded and not replayed on reconnect.
 - [ ] Holding BOOT for five seconds resets pairing and allows commissioning again.
@@ -43,8 +44,8 @@ Do not include Thread credentials or device storage.
 
 - The user confirmed pairing and connection in Home Assistant.
 - Serial output independently confirmed `commissioned=yes connected=yes` and
-  `role=child router_eligible=yes config_error=0`. Router promotion is pending;
-  an attached child role is normal for a router-eligible device.
+  `role=child router_eligible=yes config_error=0`. It initially attached as a
+  child; subsequent router promotion is recorded below.
 - Two sequences reached the firmware's `Double clap -> Matter button click`
   log, each following two accepted bursts. This verifies local recognition
   and submission to the SDK, not delivery to the Home Assistant event entity.
@@ -57,3 +58,12 @@ Do not include Thread credentials or device storage.
   attached; reconnect behaviour and event delivery still need checking.
 - Home Assistant version, Border Router model, sensor adjustment positions,
   event entity updates, and automation action results have not been recorded.
+
+### 2026-10-21: router promotion
+
+- After initially attaching as a child, the device automatically changed to
+  `role=router router_eligible=yes config_error=0`.
+- Four consecutive ten-second status reports showed the router role with
+  `commissioned=yes connected=yes` and zero sound queue overflows.
+- This confirms router-role promotion on the existing Thread network.
+  Traffic-forwarding and coverage measurements have not been performed.

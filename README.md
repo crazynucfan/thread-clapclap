@@ -7,11 +7,11 @@ router eligibility to let the device help relay mesh traffic.
 
 **Status:** firmware compiles with Arduino ESP32 **3.3.12**, all 14 host detector
 tests pass, and USB flashing, startup, and Home Assistant commissioning have
-been verified on a physical XIAO. Serial logs confirm Thread attachment as a
-router-eligible child and two recognised double-clap sequences reaching the
-Matter click API. Home Assistant event delivery, sensor tuning, and mesh
-routing still need validation. This is an MIT-licensed community prototype,
-not a certified Matter product.
+been verified on a physical XIAO. Serial logs confirm Thread attachment,
+automatic promotion from child to **router**, and two recognised double-clap
+sequences reaching the Matter click API. Home Assistant event delivery, sensor
+tuning, and traffic-forwarding/coverage measurements still need validation.
+This is an MIT-licensed community prototype, not a certified Matter product.
 
 ## 1. Connect the hardware
 
