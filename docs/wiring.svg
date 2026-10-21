@@ -1,6 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1320" height="820" viewBox="0 0 1320 820" role="img" aria-labelledby="title desc">
-  <title id="title">Thread ClapClap three-wire connection</title>
-  <desc id="desc">With USB disconnected, connect XIAO ESP32C6 3V3 to Waveshare VCC, GND to GND, and D1 GPIO1 to DOUT. Leave AOUT disconnected. The XIAO is shown component side up with USB at the top; the sensor connector is schematic, so follow its printed labels.</desc>
+<svg xmlns="http://www.w3.org/2000/svg" width="1320" height="880" viewBox="0 0 1320 880" role="img" aria-labelledby="title desc">
+  <title id="title">Thread ClapClap four-wire analog audio connection</title>
+  <desc id="desc">With USB disconnected, connect XIAO ESP32C6 3V3 to Waveshare VCC, GND to GND, D1 GPIO1 to DOUT, and D0 GPIO0 to AOUT for analog audio. The XIAO is shown component side up with USB at the top; the sensor connector is schematic, so follow its printed labels.</desc>
   <defs>
     <style>
       text { font-family: 'DejaVu Sans', Arial, sans-serif; fill: #172b44; }
@@ -10,8 +10,8 @@
       .dot { stroke: white; stroke-width: 3; }
     </style>
   </defs>
-  <rect width="1320" height="820" fill="#f6f8fc"/>
-  <text x="60" y="60" font-size="32" font-weight="bold">Connect three jumper wires</text>
+  <rect width="1320" height="880" fill="#f6f8fc"/>
+  <text x="60" y="60" font-size="32" font-weight="bold">Connect four jumper wires</text>
   <text x="60" y="95" font-size="20" fill="#af3025">Unplug USB while wiring. Power the sensor from 3V3.</text>
 
   <text x="245" y="145" text-anchor="middle" font-size="22" font-weight="bold">Seeed XIAO ESP32C6</text>
@@ -36,7 +36,7 @@
     <rect x="333" y="547" width="24" height="24"/>
   </g>
   <g class="pin" text-anchor="end">
-    <text x="122" y="296">D0</text><text x="122" y="324">D1</text><text x="122" y="386">D2</text>
+    <text x="122" y="278" style="fill:#2668c9">D0</text><text x="122" y="324">D1</text><text x="122" y="386">D2</text>
     <text x="122" y="431">D3</text><text x="122" y="476">D4</text><text x="122" y="521">D5</text><text x="122" y="566">D6</text>
   </g>
   <g class="pin">
@@ -57,7 +57,7 @@
   <text x="1125" y="489" text-anchor="middle" font-size="15">adjustments</text>
   <g class="pin">
     <text x="960" y="341">GND</text><text x="960" y="386" style="fill:#c63740">VCC</text>
-    <text x="960" y="531" style="fill:#946300">DOUT</text><text x="960" y="576" style="fill:#8793a4">AOUT</text>
+    <text x="960" y="531" style="fill:#946300">DOUT</text><text x="960" y="576" style="fill:#2668c9">AOUT</text>
   </g>
   <g fill="#d9b46d" stroke="#fff" stroke-width="2">
     <rect x="928" y="322" width="24" height="24"/><rect x="928" y="367" width="24" height="24"/>
@@ -67,7 +67,9 @@
   <path class="wire" stroke="#303b4d" d="M345 334 H940"/>
   <path class="wire" stroke="#d44048" d="M345 379 H940"/>
   <path class="wire" stroke="#d59b00" d="M145 334 H65 V650 H860 V524 H940"/>
+  <path class="wire" stroke="#2668c9" d="M145 289 H35 V675 H900 V569 H940"/>
   <g class="dot">
+    <circle cx="145" cy="289" r="8" fill="#2668c9"/><circle cx="940" cy="569" r="8" fill="#2668c9"/>
     <circle cx="345" cy="334" r="8" fill="#303b4d"/><circle cx="940" cy="334" r="8" fill="#303b4d"/>
     <circle cx="345" cy="379" r="8" fill="#d44048"/><circle cx="940" cy="379" r="8" fill="#d44048"/>
     <circle cx="145" cy="334" r="8" fill="#d59b00"/><circle cx="940" cy="524" r="8" fill="#d59b00"/>
@@ -77,10 +79,9 @@
   <rect x="545" y="385" width="197" height="28" rx="4" fill="#f6f8fc"/>
   <text x="643" y="405" text-anchor="middle" font-size="17" style="fill:#bd2733">3.3 V power → VCC</text>
   <text x="490" y="640" text-anchor="middle" font-size="20" font-weight="bold" style="fill:#946300">D1 / GPIO1 ← DOUT signal</text>
-  <path d="M928 569 H820" stroke="#9ca6b7" stroke-width="2" stroke-dasharray="6 5"/>
-  <text x="800" y="577" text-anchor="end" class="small">AOUT: no wire</text>
+  <text x="490" y="714" text-anchor="middle" font-size="20" font-weight="bold" style="fill:#2668c9">NEW: D0 / GPIO0 ← AOUT analog audio</text>
 
-  <rect x="55" y="700" width="1210" height="87" rx="12" fill="white" stroke="#d8e0eb"/>
-  <text x="78" y="731" font-size="18" font-weight="bold">Follow the printed pin labels on the sensor; its physical connector order may differ from this diagram.</text>
-  <text x="78" y="762" font-size="18">Use any three wire colours. After checking the connections, plug USB-C into the XIAO.</text>
+  <rect x="55" y="760" width="1210" height="87" rx="12" fill="white" stroke="#d8e0eb"/>
+  <text x="78" y="791" font-size="18" font-weight="bold">Follow the printed pin labels on the sensor; its physical connector order may differ from this diagram.</text>
+  <text x="78" y="822" font-size="18">Use any four wire colours. After checking the connections, plug USB-C into the XIAO.</text>
 </svg>

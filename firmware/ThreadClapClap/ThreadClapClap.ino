@@ -19,9 +19,19 @@
 #include <platform/CHIPDeviceLayer.h>
 
 #include "Config.h"
+#include "AnalogAudio.h"
 
 MatterGenericSwitch clapSwitch;
 ClapDetector detector(config::detector);
+AnalogAudio audio;
+AudioAnalyzer analyzer;
+AudioClapDetector audioDetector(config::audioDetector);
+uint32_t lastAudioOverflow = 0;
+uint32_t lastAudioStatus = 0;
+uint32_t analyzedFrames = 0;
+uint32_t acceptedAudioClaps = 0;
+uint32_t rejectedAudioSounds = 0;
+uint32_t maxAnalysisUs = 0;
 
 // Capture both edges: even very short LOW pulses reach the detector. No logging
 // or Matter calls in the ISR. Drop the whole partial gesture on queue overflow.
@@ -154,6 +164,75 @@ static void processSound(bool ready) {
   }
 }
 
+static void processAudio(bool ready) {
+  const uint32_t overflows = audio.overflows();
+  if (overflows != lastAudioOverflow) {
+    lastAudioOverflow = overflows;
+    analyzer.reset();
+    audioDetector.reset(0);
+    const esp_err_t error = audio.recover();
+    if (error != ESP_OK) fatal("FATAL: could not recover ADC stream.");
+    Serial.println("Audio DMA overflow: discard gesture and recalibrate; no stale event replay.");
+    return;
+  }
+  if (ready != lastReady) {
+    audioDetector.reset(analyzer.timeMs());
+    lastReady = ready;
+    Serial.println("Connection changed: clear pending audio gesture and recalibrate for 2s.");
+  }
+  // At most 32ms of audio per loop; the Thread/Matter tasks keep getting CPU.
+  for (unsigned batch = 0; batch < 4; ++batch) {
+    uint16_t samples[AnalogAudio::samplesPerRead];
+    uint32_t count = 0;
+    const esp_err_t error = audio.read(samples, count);
+    if (error == ESP_ERR_TIMEOUT) break;
+    if (error == ESP_ERR_INVALID_STATE) {
+      analyzer.reset();
+      audioDetector.reset(0);
+      if (audio.recover() != ESP_OK) fatal("FATAL: ADC overrun recovery failed.");
+      Serial.println("Audio stream overrun: discard gesture and recalibrate.");
+      break;
+    }
+    if (error != ESP_OK) {
+      Serial.printf("ADC read error: %s\n", esp_err_to_name(error));
+      fatal("FATAL: analog sampling failed; check AOUT -> D0 and restart.");
+    }
+    const uint32_t startedUs = micros();
+    for (uint32_t i = 0; i < count; ++i) {
+      if (!analyzer.push(samples[i])) continue;
+      ++analyzedFrames;
+      if (audio.overflows() != lastAudioOverflow) break;
+      const auto result = audioDetector.process(analyzer.features(), analyzer.timeMs());
+      if (result.decision != AudioClapDetector::Decision::None) {
+        if (result.decision == AudioClapDetector::Decision::Accepted) ++acceptedAudioClaps;
+        else if (result.decision != AudioClapDetector::Decision::Calibrated) ++rejectedAudioSounds;
+        const auto &f = audioDetector.lastCandidate();
+        Serial.printf("Audio %s: rms=%.1f noise=%.1f high=%.2f flat=%.2f tone=%.2f clip=%.2f duration=%lu attack=%.1f pending=%u\n",
+                      AudioClapDetector::name(result.decision), f.rms, audioDetector.noiseRms(),
+                      f.highRatio, f.flatness, f.concentration, f.clippedFraction,
+                      static_cast<unsigned long>(audioDetector.candidateDurationMs()), audioDetector.candidateAttack(),
+                      audioDetector.pendingClaps());
+      }
+      if (result.doubleClap && audio.overflows() == lastAudioOverflow) reportDoubleClap(ready);
+    }
+    const uint32_t duration = micros() - startedUs;
+    if (duration > maxAnalysisUs) maxAnalysisUs = duration;
+    // If an overflow happened while processing, discard everything before more
+    // samples are consumed; the recovery path above runs on the next loop.
+    if (audio.overflows() != lastAudioOverflow) break;
+  }
+  const uint32_t now = millis();
+  if (now - lastAudioStatus >= 2000) {
+    lastAudioStatus = now;
+    const auto &f = analyzer.features();
+    Serial.printf("Audio status: frames=%lu rms=%.1f noise=%.1f raw=%.0f range=%u..%u clip=%.2f accepted=%lu rejected=%lu dma_overflows=%lu max_batch_us=%lu\n",
+                  static_cast<unsigned long>(analyzedFrames), f.rms, audioDetector.noiseRms(),
+                  f.rawMean, f.rawMin, f.rawMax, f.clippedFraction,
+                  static_cast<unsigned long>(acceptedAudioClaps), static_cast<unsigned long>(rejectedAudioSounds),
+                  static_cast<unsigned long>(lastAudioOverflow), static_cast<unsigned long>(maxAnalysisUs));
+  }
+}
+
 static void handleFactoryReset() {
   const uint32_t now = millis();
   if (digitalRead(config::resetButtonPin) != LOW) {
@@ -170,6 +249,7 @@ static void handleFactoryReset() {
 
 void setup() {
   Serial.begin(115200);
+  Serial.setTxTimeoutMs(0); // logging must never stall audio when USB isn't read
   delay(500);  // bounded: standalone USB power must work without a serial host
   pinMode(config::soundPin, INPUT_PULLUP);
   pinMode(config::resetButtonPin, INPUT_PULLUP);
@@ -196,9 +276,21 @@ void setup() {
   }
   updateThreadStatus();
   detectionStarted = millis();
-  detector.reset(detectionStarted, digitalRead(config::soundPin) == LOW);
-  attachInterrupt(digitalPinToInterrupt(config::soundPin), captureSoundEdge, CHANGE);
-  Serial.println("Allow 1.5s to settle, then clap twice, 160-599ms apart. Single claps do nothing.");
+  if (config::useAnalogAudio) {
+    const esp_err_t error = audio.begin(config::audioPin, AudioAnalyzer::sampleRate);
+    if (error != ESP_OK) {
+      Serial.printf("ADC start error: %s\n", esp_err_to_name(error));
+      fatal("FATAL: could not start analog audio sampling.");
+    }
+    analyzer.reset();
+    audioDetector.reset(0);
+    Serial.printf("Analog FFT mode: AOUT -> GPIO%u, 16kHz / 256 samples / 50%% overlap. Keep quiet for 2s.\n", config::audioPin);
+  } else {
+    detector.reset(detectionStarted, digitalRead(config::soundPin) == LOW);
+    attachInterrupt(digitalPinToInterrupt(config::soundPin), captureSoundEdge, CHANGE);
+    Serial.println("Digital mode: allow 1.5s to settle. DOUT only; no FFT filtering.");
+  }
+  Serial.println("Clap twice, 160-599ms apart. Single claps do nothing.");
 }
 
 void loop() {
@@ -208,7 +300,8 @@ void loop() {
   const bool commissioned = Matter.isDeviceCommissioned();
   const bool ready = commissioned && Matter.isThreadConnected();
   chip::DeviceLayer::PlatformMgr().UnlockChipStack();
-  processSound(ready);
+  if (config::useAnalogAudio) processAudio(ready);
+  else processSound(ready);
   handleFactoryReset();
   const uint32_t now = millis();
   if (now - lastStatus >= 10000) {

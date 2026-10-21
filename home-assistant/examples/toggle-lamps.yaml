@@ -1,0 +1,26 @@
+# Example entity IDs: replace these with your own before importing.
+id: clap_toggle_lamps
+alias: Clap button - Toggle lamps
+description: Toggle the example lamp group once for each recognised double clap.
+triggers:
+  - trigger: state
+    entity_id: event.clap_button
+    not_from:
+      - unknown
+      - unavailable
+    not_to:
+      - unknown
+      - unavailable
+conditions:
+  - condition: template
+    value_template: >-
+      {{ trigger.from_state is not none
+         and trigger.to_state is not none
+         and trigger.from_state.state != trigger.to_state.state
+         and trigger.to_state.attributes.get('event_type') == 'initial_press' }}
+actions:
+  - action: switch.toggle
+    target:
+      entity_id: switch.lamp_group
+mode: single
+max_exceeded: silent

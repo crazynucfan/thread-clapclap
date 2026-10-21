@@ -42,11 +42,12 @@ def main():
         compiler = os.environ.get("CXX", "g++")
         if not shutil.which(compiler):
             parser.error(f"{compiler} not found; install a C++ compiler or set CXX=clang++")
-        binary = ROOT / ".build" / "clap-detector-test"
-        binary.parent.mkdir(parents=True, exist_ok=True)
-        run([compiler, "-std=c++17", "-Wall", "-Wextra", "-Werror", "-pedantic",
-             ROOT / "tests" / "clap_detector_test.cpp", "-o", binary])
-        run([binary])
+        for source in sorted((ROOT / "tests").glob("*_test.cpp")):
+            binary = ROOT / ".build" / source.stem
+            binary.parent.mkdir(parents=True, exist_ok=True)
+            run([compiler, "-std=c++17", "-Wall", "-Wextra", "-Werror", "-pedantic",
+                 source, "-o", binary])
+            run([binary])
         return
 
     if not shutil.which(args.cli):

@@ -1,8 +1,9 @@
 # Hardware validation
 
 These checks require the physical XIAO, sound sensor, and the user's Home
-Assistant/Thread network. Flashing, startup, and commissioning have been checked;
-the remaining checks are pending. Record the firmware commit, Home Assistant
+Assistant/Thread network. Digital-mode flashing, startup, commissioning, router
+promotion, and the lamp automation's action have been checked. Analog sampling
+has also been checked; acoustic accuracy testing is in progress. Record the firmware commit, Home Assistant
 version, Border Router, sensor settings, and outcome when performing them.
 Do not include Thread credentials or device storage.
 
@@ -12,13 +13,17 @@ Do not include Thread credentials or device storage.
 - [ ] DOUT is normally HIGH; one nearby clap produces one accepted burst.
 - [ ] Single clap produces no Home Assistant action.
 - [x] Two double-clap sequences reach the Matter click API in the serial log.
-- [ ] Double clap produces exactly one action after the recognition window.
+- [x] A recognised physical double clap produces one lamp action after the recognition window.
 - [ ] Triple clap produces no action.
 - [ ] Quiet room, conversation, TV, and a door closing are evaluated for false triggers.
 - [x] Commissioning into Home Assistant joins the existing Thread network.
-- [ ] The Generic Switch event entity appears and updates in Home Assistant.
+- [x] The Generic Switch event entity appears and updates in Home Assistant.
 - [x] Serial output reports router eligibility and the actual Thread role.
 - [x] Thread automatically promotes the attached board from child to router.
+- [x] AOUT → D0 streams analog samples while Matter remains paired and attached.
+- [x] Fixed-point FFT processing runs without ADC DMA overflow in observed runs.
+- [x] Lamp-test automation is installed and enabled.
+- [x] Its action toggles the existing lamp group off → on → off when triggered manually.
 - [ ] Unplug/replug retains pairing and the automation still works.
 - [ ] Events during a network outage are discarded and not replayed on reconnect.
 - [ ] Holding BOOT for five seconds resets pairing and allows commissioning again.
@@ -67,3 +72,50 @@ Do not include Thread credentials or device storage.
   `commissioned=yes connected=yes` and zero sound queue overflows.
 - This confirms router-role promotion on the existing Thread network.
   Traffic-forwarding and coverage measurements have not been performed.
+
+### 2026-10-21: analog FFT filtering and lamp action
+
+- The user added AOUT → D0/GPIO0 using the Waveshare lead's blue wire, keeping
+  DOUT → D1, 3V3, and GND connected.
+- The first floating-point implementation overran the ADC buffer. It was
+  replaced by a fixed-point high-pass filter, Hann window, radix-2 FFT, and
+  integer lookup for per-bin logarithms. USB logging is non-blocking.
+- The optimized stream ran for more than ten minutes with zero DMA overflows,
+  about 250-251 overlapping frames per two-second status interval, and
+  `commissioned=yes connected=yes role=router`. A later startup showed task
+  preemption in the maximum batch time while the DMA buffer absorbed it.
+- Input bias was around 1,600 raw ADC counts and quiet RMS around 6-7 counts;
+  observed clipping fraction was zero. Counts are not calibrated voltages.
+- A controlled double-clap attempt was captured with peak RMS around 606 and
+  500 counts, but the initial duration check rejected both bursts. This led
+  to peak-relative release, echo-tail lockout, and module-appropriate spectral
+  bounds. No gain adjustment was needed for that captured attempt.
+- Thirty-one host tests pass: 14 digital tests and 17 analog tests, including
+  reverberant tails and a feature fixture based on the captured clap metrics.
+  Undefined-behaviour sanitizer checks passed on the analog tests.
+- An enabled local Home Assistant automation connects the button InitialPress
+  event to a lamp-group toggle. A generic version with placeholder entity IDs
+  is in `home-assistant/examples/toggle-lamps.yaml`. The deployed household
+  configuration is kept private.
+- Manually triggering the automation twice changed the group off → on → off.
+  This verifies the action path, not acoustic detection or event delivery.
+  No credentials or real household entity IDs are included in this repository.
+- End-to-end clap → Matter event → lamp toggle and real-room false-positive
+  rates remain under test.
+
+### 2026-10-21: end-to-end event and timing refinement
+
+- A physical pair was accepted with peak RMS about 695 and 726 counts,
+  high-band fractions 0.35 and 0.33, flatness 0.14, and zero clipping.
+- The serial log emitted one Matter click. The Home Assistant event entity
+  updated, the automation's `last_triggered` changed once, and the test
+  lamp group changed from off to on. ShortRelease did not cause a second toggle.
+- Earlier acoustic attempts were frequently rejected, so one successful event
+  does not establish reliable recognition. Logs exposed a duration boundary
+  bug: waiting for release quiet was incorrectly counted toward the maximum
+  burst time. A regression test now covers that case.
+- The latest flashed version excludes release-confirmation time, uses a 25%
+  peak-relative release level, and sets minimum spectral flatness to 0.08.
+  It remains paired, attached as a router, and reports zero DMA overflows.
+- Repeatability, single/triple-clap checks, and labelled real-room negative
+  tests remain to be completed. No measured precision/recall is claimed.

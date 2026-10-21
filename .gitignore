@@ -6,3 +6,4 @@ __pycache__/
 *.elf
 *.map
 .DS_Store
+.local/

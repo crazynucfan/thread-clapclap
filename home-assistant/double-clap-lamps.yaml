@@ -1,0 +1,50 @@
+blueprint:
+  name: Thread ClapClap - toggle lamps
+  description: >-
+    Toggle the selected lamps on a recognised double clap. Select a light group, or select the individual
+    lamp lights/switches. A light group keeps their on/off action coordinated;
+    individual entities each toggle their own state. ShortRelease is ignored
+    so one double clap cannot toggle the lamps twice.
+  domain: automation
+  input:
+    clap_event:
+      name: ClapClap Matter button event
+      selector:
+        entity:
+          filter:
+            - domain: event
+              integration: matter
+    lamps:
+      name: Lamps to toggle
+      description: Select a lamp group or the individual lamp entities.
+      selector:
+        entity:
+          multiple: true
+          filter:
+            - domain: light
+            - domain: switch
+
+triggers:
+  - trigger: state
+    entity_id: !input clap_event
+    not_from:
+      - unknown
+      - unavailable
+    not_to:
+      - unknown
+      - unavailable
+
+conditions:
+  - condition: template
+    value_template: >-
+      {{ trigger.from_state is not none
+         and trigger.to_state is not none
+         and trigger.from_state.state != trigger.to_state.state
+         and trigger.to_state.attributes.get('event_type') == 'initial_press' }}
+
+actions:
+  - action: homeassistant.toggle
+    target:
+      entity_id: !input lamps
+mode: single
+max_exceeded: silent
