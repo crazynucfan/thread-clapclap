@@ -174,4 +174,14 @@ Do not include Thread credentials or device storage.
 - The firmware compiles with Arduino ESP32 3.3.12: 2,684,664 bytes of flash and
   143,644 bytes of static RAM. Upload succeeded, commissioning was retained,
   the board reattached as a router, and audio DMA overflows remained zero.
-  End-to-end physical retesting is pending.
+  The controller then confirmed a fresh secure session and successful event
+  subscription after automatic recovery from the reboot. End-to-end physical
+  retesting is pending.
+
+- During the post-upload observation, the configured test lamp group and all
+  five member plugs were unavailable in Home Assistant. The controller logged
+  connection timeouts for the Wi-Fi plugs before this firmware upload. The
+  clapper's own Matter subscription recovered successfully. A fresh physical
+  pair can test recognition and button delivery, but visible lamp validation
+  is pending restoration of the target plugs. No reliability improvement is
+  claimed from the feature regression alone.
