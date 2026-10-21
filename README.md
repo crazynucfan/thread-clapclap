@@ -5,10 +5,11 @@ Seeed XIAO ESP32-C6 and Waveshare Sound Sensor. Two short sound bursts send one
 Matter Generic Switch click over Thread. The firmware also enables Thread
 router eligibility to let the device help relay mesh traffic.
 
-**Status:** firmware compiles for the XIAO using Arduino ESP32 **3.3.12**; all
-14 host detector tests pass. Physical sensor tuning, commissioning, event
-delivery, and router behaviour still need validation on a real device. This is
-an MIT-licensed community prototype, not a certified Matter product.
+**Status:** firmware compiles with Arduino ESP32 **3.3.12**, all 14 host detector
+tests pass, and USB flashing and startup have been verified on a physical XIAO.
+The board reports its Generic Switch endpoint and router eligibility. Sensor
+tuning, commissioning, event delivery, and mesh routing still need validation.
+This is an MIT-licensed community prototype, not a certified Matter product.
 
 ## 1. Connect the hardware
 
