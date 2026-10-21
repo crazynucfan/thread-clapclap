@@ -119,3 +119,34 @@ Do not include Thread credentials or device storage.
   It remains paired, attached as a router, and reports zero DMA overflows.
 - Repeatability, single/triple-clap checks, and labelled real-room negative
   tests remain to be completed. No measured precision/recall is claimed.
+
+### 2026-10-21: repeated trials and sequence regressions
+
+- The operator reported one visible success among four pairs, followed by no
+  visible successes in another three-pair trial. Recognition remains unreliable.
+- Logs showed a weak precursor consuming a subsequent strong clap, and a long
+  narrowband interruption clearing an otherwise accepted pair. Sequence handling
+  now ignores much weaker interruptions, restarts on a stronger/different
+  candidate, and preserves pending claps across rejected tonal sounds.
+- Six additional feature-timeline regressions cover those cases, including
+  preservation of sustained-broadband and comparable-triple rejection. All 37
+  host tests and the analog undefined-behaviour sanitizer check pass.
+- Closely delivered Matter events were seen in Home Assistant. The supplied
+  automations and the deployed test automation now queue up to ten runs. This
+  prevents overlapping actions being dropped; it does not correct delayed
+  delivery or establish that each event corresponds to an intentional clap.
+- Added candidate onset times, click sequence numbers, and Thread neighbour/
+  MAC acknowledgement/retry diagnostics. No raw audio is recorded or sent.
+- The sequence update compiled and flashed without erasing commissioning. The
+  board reattached as a router and reported zero audio DMA overflows. Later
+  Home Assistant history contained event and group-state changes, but these
+  cannot be confidently assigned to the operator's individual attempts.
+- Wiring artwork now explicitly shows the labelled underside with USB at the
+  top: D0/D1 on the right and GND/3V3 on the left. Connections are unchanged.
+
+- A subsequent diagnostic build adds the peak/RMS crest factor and significant
+  FFT-bin count to candidate logs without relaxing spectral thresholds. Tone
+  and broadband FFT fixtures also check those bin counts. This build was
+  flashed with commissioning retained; the board reattached as a router and
+  continued sampling without DMA overflows. A labelled physical pair is still
+  needed to determine the next spectral-classifier adjustment.

@@ -38,5 +38,6 @@ conditions:
          and trigger.to_state.attributes.get('event_type') == 'initial_press' }}
 
 actions: !input clap_action
-mode: single
+mode: queued
+max: 10
 max_exceeded: silent

@@ -7,7 +7,7 @@ click over Thread. The firmware also enables Thread
 router eligibility to let the device help relay mesh traffic.
 
 **Status:** the analog FFT firmware compiles with Arduino ESP32 **3.3.12**,
-and all **31 host tests** pass. The earlier digital version was flashed,
+and all **37 host tests** pass. The earlier digital version was flashed,
 commissioned into Home Assistant, and automatically became a Thread router.
 The analog version has also delivered a real double-clap event through
 Home Assistant to the lamp group. Recognition is still being tuned; real-room
@@ -28,9 +28,10 @@ XIAO must have its headers fitted, and the sensor must have accessible pins.
 | DOUT | **D1 / GPIO1** | Yellow |
 | **AOUT** | **D0 / GPIO0** | **Blue — new analog connection** |
 
-With the XIAO's **component side facing you and USB-C socket at the top**, D1
-is the second pin down on the left and D0 is the top-left pin. GND is the
-second down on the right; 3V3 is the third down on the right. Follow the **printed sensor pin labels**:
+The diagram shows the XIAO's **labelled underside facing you, with USB-C at
+the top**: D0 is the top-right pin and D1 is the second down on the right.
+GND is the second down on the left; 3V3 is the third down on the left.
+The component-side view mirrors those positions. Follow the **printed sensor pin labels**:
 its connector in the illustration is schematic, not a physical pin-order guide.
 Wire colours are your choice.
 
@@ -196,13 +197,17 @@ classifier:
    crest factor rejects a smooth sine wave and isolated electrical spikes.
 5. Clipped bursts are rejected because saturation corrupts the spectral tests.
 6. Two accepted bursts must arrive roughly 160-600 ms apart and have reasonably
-   similar strength and spectral balance. A third accepted burst cancels the pair.
+   similar strength and spectral balance. A third comparable burst cancels the pair.
 
 The event still waits for the 600 ms window after the second onset to close,
 and Home Assistant still sees **one button click**, so the same automation
-blueprint works. Sustained noise, clipping, and mismatched pairs clear pending claps; short
-rejected tones are ignored, and echo tails inside the 160 ms lockout do not
-erase a genuine first clap. Data loss resets the
+blueprint works. Sustained broadband noise and clipping clear pending claps.
+Rejected tones preserve pending claps. A much weaker candidate is ignored; a
+stronger or spectrally different candidate starts a new sequence, allowing a
+genuine pair to follow unrelated sound. A fresh strong onset can also interrupt
+a weak background candidate. Echo tails inside the 160 ms lockout do not
+erase a genuine first clap. The supplied automations queue up to ten runs so
+closely delivered clicks can each execute their action. Data loss resets the
 stream and calibration; there is no automatic fallback to the less selective
 DOUT-only detector. Offline gestures are discarded.
 
@@ -219,9 +224,13 @@ raw ADC bias/range, clipping fraction, counters, DMA overflows, and the maximum
 processing time for a 128-sample batch. Each completed candidate prints its
 classification, for example `accepted`, `rejected_spectrum`,
 `rejected_slow_attack`, `rejected_clipping`, `rejected_duration`, or
-`rejected_pair_mismatch`.
+`restarted_stronger_or_different`, or `ignored_weaker`. Thread status also
+reports neighbour signal/link quality and MAC acknowledgement/retry counters;
+a connected router status alone does not prove timely Matter delivery.
 
 The `high`, `flat`, and `tone` fields are ratios, not calibrated sound levels.
+`bins` counts in-band FFT bins holding at least 1/128 of total band power;
+`crest` is peak divided by RMS. Both help explain spectral rejections.
 `raw` and `range` are ADC counts, not millivolts. `max_batch_us` includes
 classification/logging time and task preemption; it is a diagnostic, not a
 hard real-time deadline guarantee. Repeated DMA overflows mean the stream is
@@ -285,14 +294,15 @@ your existing Border Router to connect Thread to the Home Assistant LAN.
 python3 tools/project.py test
 ```
 
-The **31 host tests** include the original 14 digital tests plus 17 analog
+The **37 host tests** include the original 14 digital tests plus 23 analog
 analysis/classification tests. Analog fixtures cover DC removal, a sinusoid's
 FFT/RMS, broadband noise, valid pairs across window alignments, ignored singles
 and triples, tonal and low-frequency pairs, sustained noise and recovery,
 slow attacks, clipping, electrical spikes, mismatched pairs, echoes, resets,
 and `millis()` rollover. They also cover reverberant clap tails and a feature
-fixture based on the first physical clap test, plus a regression that excludes
-the release-quiet confirmation time from burst duration. These tests are not a recorded
+fixture based on the first physical clap test, exclusion of release-quiet
+time from burst duration, and feature timelines with weak precursors, tonal
+interruptions, strong onsets inside background sound, and a third burst. These tests are not a recorded
 real-room accuracy benchmark.
 
 Analog mode uses ADC DMA with bounded processing batches. The main loop

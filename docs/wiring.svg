@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1320" height="880" viewBox="0 0 1320 880" role="img" aria-labelledby="title desc">
   <title id="title">Thread ClapClap four-wire analog audio connection</title>
-  <desc id="desc">With USB disconnected, connect XIAO ESP32C6 3V3 to Waveshare VCC, GND to GND, D1 GPIO1 to DOUT, and D0 GPIO0 to AOUT for analog audio. The XIAO is shown component side up with USB at the top; the sensor connector is schematic, so follow its printed labels.</desc>
+  <desc id="desc">With USB disconnected, connect XIAO ESP32C6 3V3 to Waveshare VCC, GND to GND, D1 GPIO1 to DOUT, and D0 GPIO0 to AOUT for analog audio. The XIAO is shown underside facing you with USB at the top; the sensor connector is schematic, so follow its printed labels.</desc>
   <defs>
     <style>
       text { font-family: 'DejaVu Sans', Arial, sans-serif; fill: #172b44; }
@@ -15,14 +15,14 @@
   <text x="60" y="95" font-size="20" fill="#af3025">Unplug USB while wiring. Power the sensor from 3V3.</text>
 
   <text x="245" y="145" text-anchor="middle" font-size="22" font-weight="bold">Seeed XIAO ESP32C6</text>
-  <text x="245" y="174" text-anchor="middle" class="small">Component side facing you · USB at top</text>
+  <text x="245" y="174" text-anchor="middle" class="small">Labelled underside facing you · USB at top</text>
   <rect x="145" y="215" width="200" height="390" rx="20" fill="#152c49"/>
   <rect x="204" y="195" width="82" height="64" rx="10" fill="#c7d1dd" stroke="#70849b" stroke-width="3"/>
   <rect x="214" y="207" width="62" height="15" rx="7" fill="#3b4b61"/>
   <text x="245" y="248" text-anchor="middle" font-size="15">USB-C</text>
-  <rect x="202" y="357" width="86" height="105" rx="5" fill="#c5cdd6"/>
-  <text x="245" y="402" text-anchor="middle" font-size="15">ESP32</text>
-  <text x="245" y="426" text-anchor="middle" font-size="15">C6</text>
+  <rect x="195" y="362" width="100" height="115" rx="5" fill="#233c55" stroke="#7590aa"/>
+  <text x="245" y="398" text-anchor="middle" font-size="15" style="fill:#dce7f6">UNDERSIDE</text>
+  <text x="245" y="428" text-anchor="middle" font-size="14" style="fill:#dce7f6">pin labels</text>
   <text x="245" y="567" text-anchor="middle" font-size="16" style="fill:#dce7f6">XIAO</text>
 
   <g fill="#d9b46d" stroke="#fff" stroke-width="2">
@@ -36,13 +36,13 @@
     <rect x="333" y="547" width="24" height="24"/>
   </g>
   <g class="pin" text-anchor="end">
-    <text x="122" y="278" style="fill:#2668c9">D0</text><text x="122" y="324">D1</text><text x="122" y="386">D2</text>
-    <text x="122" y="431">D3</text><text x="122" y="476">D4</text><text x="122" y="521">D5</text><text x="122" y="566">D6</text>
+    <text x="122" y="296" style="fill:#8793a4">5V</text>
+    <text x="122" y="329">GND</text><text x="122" y="374" style="fill:#c63740">3V3</text>
+    <text x="122" y="431">D10</text><text x="122" y="476">D9</text><text x="122" y="521">D8</text><text x="122" y="566">D7</text>
   </g>
   <g class="pin">
-    <text x="371" y="296" style="fill:#8793a4">5V — leave unused</text>
-    <text x="371" y="329">GND</text><text x="371" y="374" style="fill:#c63740">3V3</text>
-    <text x="371" y="431">D10</text><text x="371" y="476">D9</text><text x="371" y="521">D8</text><text x="371" y="566">D7</text>
+    <text x="371" y="278" style="fill:#2668c9">D0</text><text x="371" y="324">D1</text><text x="371" y="386">D2</text>
+    <text x="371" y="431">D3</text><text x="371" y="476">D4</text><text x="371" y="521">D5</text><text x="371" y="566">D6</text>
   </g>
 
   <text x="1058" y="145" text-anchor="middle" font-size="22" font-weight="bold">Waveshare sound sensor</text>
@@ -64,22 +64,21 @@
     <rect x="928" y="512" width="24" height="24"/><rect x="928" y="557" width="24" height="24"/>
   </g>
 
-  <path class="wire" stroke="#303b4d" d="M345 334 H940"/>
-  <path class="wire" stroke="#d44048" d="M345 379 H940"/>
-  <path class="wire" stroke="#d59b00" d="M145 334 H65 V650 H860 V524 H940"/>
-  <path class="wire" stroke="#2668c9" d="M145 289 H35 V675 H900 V569 H940"/>
+  <path class="wire" stroke="#303b4d" d="M145 334 H35 V610 H820 V334 H940"/>
+  <path class="wire" stroke="#d44048" d="M145 379 H55 V632 H845 V379 H940"/>
+  <path class="wire" stroke="#d59b00" d="M345 334 H780 V524 H940"/>
+  <path class="wire" stroke="#2668c9" d="M345 289 H900 V569 H940"/>
   <g class="dot">
-    <circle cx="145" cy="289" r="8" fill="#2668c9"/><circle cx="940" cy="569" r="8" fill="#2668c9"/>
-    <circle cx="345" cy="334" r="8" fill="#303b4d"/><circle cx="940" cy="334" r="8" fill="#303b4d"/>
-    <circle cx="345" cy="379" r="8" fill="#d44048"/><circle cx="940" cy="379" r="8" fill="#d44048"/>
-    <circle cx="145" cy="334" r="8" fill="#d59b00"/><circle cx="940" cy="524" r="8" fill="#d59b00"/>
+    <circle cx="345" cy="289" r="8" fill="#2668c9"/><circle cx="940" cy="569" r="8" fill="#2668c9"/>
+    <circle cx="145" cy="334" r="8" fill="#303b4d"/><circle cx="940" cy="334" r="8" fill="#303b4d"/>
+    <circle cx="145" cy="379" r="8" fill="#d44048"/><circle cx="940" cy="379" r="8" fill="#d44048"/>
+    <circle cx="345" cy="334" r="8" fill="#d59b00"/><circle cx="940" cy="524" r="8" fill="#d59b00"/>
   </g>
-  <rect x="553" y="307" width="181" height="24" rx="4" fill="#f6f8fc"/>
-  <text x="643" y="325" text-anchor="middle" font-size="17">Ground → GND</text>
-  <rect x="545" y="385" width="197" height="28" rx="4" fill="#f6f8fc"/>
-  <text x="643" y="405" text-anchor="middle" font-size="17" style="fill:#bd2733">3.3 V power → VCC</text>
-  <text x="490" y="640" text-anchor="middle" font-size="20" font-weight="bold" style="fill:#946300">D1 / GPIO1 ← DOUT signal</text>
-  <text x="490" y="714" text-anchor="middle" font-size="20" font-weight="bold" style="fill:#2668c9">NEW: D0 / GPIO0 ← AOUT analog audio</text>
+  <text x="565" y="275" text-anchor="middle" font-size="19" font-weight="bold" style="fill:#2668c9">BLUE: D0 / GPIO0 ← AOUT</text>
+  <text x="565" y="362" text-anchor="middle" font-size="19" font-weight="bold" style="fill:#946300">D1 / GPIO1 ← DOUT</text>
+  <text x="460" y="599" text-anchor="middle" font-size="18">Ground → GND</text>
+  <text x="460" y="659" text-anchor="middle" font-size="18" style="fill:#bd2733">3.3 V power → VCC</text>
+  <text x="660" y="716" text-anchor="middle" font-size="19">USB at top · underside view · leave the 5V pin unused</text>
 
   <rect x="55" y="760" width="1210" height="87" rx="12" fill="white" stroke="#d8e0eb"/>
   <text x="78" y="791" font-size="18" font-weight="bold">Follow the printed pin labels on the sensor; its physical connector order may differ from this diagram.</text>

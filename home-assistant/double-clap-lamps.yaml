@@ -46,5 +46,6 @@ actions:
   - action: homeassistant.toggle
     target:
       entity_id: !input lamps
-mode: single
+mode: queued
+max: 10
 max_exceeded: silent

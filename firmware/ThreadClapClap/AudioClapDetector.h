@@ -24,7 +24,7 @@ class AudioClapDetector {
     float maxPairHighDifference = 0.35f;
   };
 
-  enum class Decision { None, Calibrated, Accepted, SlowAttack, Spectrum, Clipping, Duration, PairMismatch };
+  enum class Decision { None, Calibrated, Accepted, Restarted, IgnoredWeaker, SlowAttack, Spectrum, Clipping, Duration };
   struct Result {
     Decision decision = Decision::None;
     bool doubleClap = false;
@@ -58,8 +58,15 @@ class AudioClapDetector {
       return result;
     }
     const float threshold = std::fmax(config_.minRms, noise_ * config_.noiseMultiplier);
+    const bool newImpulse = f.rms >= threshold
+        && f.rms >= std::fmax(previousRms_, noise_) * config_.attackRatio;
 
     if (blocked_) {
+      if (newImpulse) {
+        startBurst(f, now, threshold);
+        previousRms_ = f.rms;
+        return result;
+      }
       // Learn a sustained new background so it cannot hold the detector blocked
       // forever. It must settle below the updated release level before rearming.
       learn(f.rms, 0.03f);
@@ -74,20 +81,18 @@ class AudioClapDetector {
         return result;
       }
       if (f.rms >= threshold) {
-        active_ = true;
-        onset_ = lastLoud_ = now;
-        releaseLevel_ = threshold * 0.45f;
-        attack_ = f.rms / std::fmax(previousRms_, noise_);
-        fastAttack_ = attack_ >= config_.attackRatio;
-        duration_ = 0;
-        broadband_ = false;
-        clipped_ = false;
-        peak_ = {};
-        observe(f);
+        startBurst(f, now, threshold);
       } else {
         learn(f.rms, f.rms > noise_ ? 0.01f : 0.05f);
       }
     } else {
+      if (newImpulse && f.rms >= peak_.rms * 2) {
+        // A fresh loud impulse can start inside a weaker tonal/background
+        // candidate. Otherwise unrelated sound can mask a genuine clap.
+        startBurst(f, now, threshold);
+        previousRms_ = f.rms;
+        return result;
+      }
       if (f.rms >= releaseLevel_) {
         lastLoud_ = now;
         observe(f);
@@ -96,11 +101,12 @@ class AudioClapDetector {
       // Judge actual above-threshold duration. Waiting for the release quiet
       // period must not turn an otherwise valid burst into a long sound.
       if (duration_ > config_.maxBurstMs) {
-        result.decision = Decision::Duration;
+        const bool disruptive = broadband_ && fastAttack_;
+        result.decision = disruptive ? Decision::Duration : Decision::Spectrum;
         active_ = false;
-        blocked_ = true;
+        blocked_ = disruptive;
         lastLoud_ = now;
-        count_ = 0;
+        if (disruptive) count_ = 0;
       } else if (now - lastLoud_ >= config_.quietMs) {
         active_ = false;
         if (lastLoud_ - onset_ > config_.maxBurstMs) result.decision = Decision::Duration;
@@ -108,8 +114,7 @@ class AudioClapDetector {
         else if (!fastAttack_) result.decision = Decision::SlowAttack;
         else if (!broadband_) result.decision = Decision::Spectrum;
         else result.decision = accept(onset_);
-        if (result.decision == Decision::Duration || result.decision == Decision::Clipping
-            || result.decision == Decision::PairMismatch) count_ = 0;
+        if (result.decision == Decision::Duration || result.decision == Decision::Clipping) count_ = 0;
       }
     }
     previousRms_ = f.rms;
@@ -121,23 +126,38 @@ class AudioClapDetector {
   uint8_t pendingClaps() const { return count_; }
   const AudioFeatures &lastCandidate() const { return peak_; }
   uint32_t candidateDurationMs() const { return duration_; }
+  uint32_t candidateStartMs() const { return onset_; }
   float candidateAttack() const { return attack_; }
 
   static const char *name(Decision decision) {
     switch (decision) {
       case Decision::Calibrated: return "calibrated";
       case Decision::Accepted: return "accepted";
+      case Decision::Restarted: return "restarted_stronger_or_different";
+      case Decision::IgnoredWeaker: return "ignored_weaker";
       case Decision::SlowAttack: return "rejected_slow_attack";
       case Decision::Spectrum: return "rejected_spectrum";
       case Decision::Clipping: return "rejected_clipping";
       case Decision::Duration: return "rejected_duration";
-      case Decision::PairMismatch: return "rejected_pair_mismatch";
       default: return "none";
     }
   }
 
  private:
   void learn(float rms, float rate) { noise_ = std::fmax(1.0f, noise_ + rate * (rms - noise_)); }
+
+  void startBurst(const AudioFeatures &f, uint32_t now, float threshold) {
+    active_ = true;
+    blocked_ = false;
+    onset_ = lastLoud_ = now;
+    releaseLevel_ = threshold * 0.45f;
+    attack_ = f.rms / std::fmax(previousRms_, noise_);
+    fastAttack_ = attack_ >= config_.attackRatio;
+    duration_ = 0;
+    broadband_ = clipped_ = false;
+    peak_ = {};
+    observe(f);
+  }
 
   void observe(const AudioFeatures &f) {
     if (f.clippedFraction > config_.maxClippedFraction) clipped_ = true;
@@ -155,18 +175,27 @@ class AudioClapDetector {
   Decision accept(uint32_t now) {
     if (haveLastClap_ && now - lastClap_ < config_.minClapGapMs) return Decision::None;
     if (!haveLastClap_ || now - lastClap_ >= config_.sequenceGapMs) count_ = 0;
-    lastClap_ = now;
-    haveLastClap_ = true;
+    if (count_) {
+      const float ratio = peak_.rms / std::fmax(firstRms_, 1e-6f);
+      if (ratio < 1 / config_.maxPairRmsRatio) return Decision::IgnoredWeaker;
+      if (ratio > config_.maxPairRmsRatio
+          || std::fabs(peak_.highRatio - firstHigh_) > config_.maxPairHighDifference) {
+        // Resynchronise on the current strong candidate instead of throwing
+        // away both it and a preceding weak/unrelated noise candidate.
+        firstRms_ = peak_.rms;
+        firstHigh_ = peak_.highRatio;
+        count_ = 1;
+        lastClap_ = now;
+        haveLastClap_ = true;
+        return Decision::Restarted;
+      }
+    }
     if (count_ == 0) {
       firstRms_ = peak_.rms;
       firstHigh_ = peak_.highRatio;
-    } else if (count_ == 1) {
-      const float ratio = peak_.rms / std::fmax(firstRms_, 1e-6f);
-      if (ratio > config_.maxPairRmsRatio || ratio < 1 / config_.maxPairRmsRatio
-          || std::fabs(peak_.highRatio - firstHigh_) > config_.maxPairHighDifference) {
-        return Decision::PairMismatch;
-      }
     }
+    lastClap_ = now;
+    haveLastClap_ = true;
     if (count_ < 3) ++count_;
     return Decision::Accepted;
   }

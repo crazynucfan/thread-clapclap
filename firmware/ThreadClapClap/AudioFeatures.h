@@ -10,6 +10,7 @@ struct AudioFeatures {
   float highRatio = 0;      // 1.5-7.5 kHz power / 250 Hz-7.5 kHz power
   float concentration = 0;  // largest three neighbouring FFT bins / band power
   float flatness = 0;       // geometric / arithmetic mean of in-band bin power
+  uint16_t occupiedBins = 0; // in-band bins holding at least 1/128 of band power
   float clippedFraction = 0;
   float rawMean = 0;
   uint16_t rawMin = 0;
@@ -145,6 +146,9 @@ class AudioAnalyzer {
       if (triplet > maxTriplet) maxTriplet = triplet;
     }
     if (total) {
+      for (size_t i = firstBin; i <= lastBin; ++i) {
+        if (power_[i] * 128 >= total) ++features_.occupiedBins;
+      }
       constexpr float bins = lastBin - firstBin + 1;
       features_.highRatio = static_cast<float>(high) / total;
       features_.concentration = static_cast<float>(maxTriplet) / total;

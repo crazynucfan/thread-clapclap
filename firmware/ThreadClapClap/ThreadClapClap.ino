@@ -16,6 +16,7 @@
 #include <esp_openthread_lock.h>
 #include <openthread/thread.h>
 #include <openthread/thread_ftd.h>
+#include <openthread/link.h>
 #include <platform/CHIPDeviceLayer.h>
 
 #include "Config.h"
@@ -111,9 +112,27 @@ static void updateThreadStatus() {
   }
   const otDeviceRole role = otThreadGetDeviceRole(instance);
   const bool eligible = otThreadIsRouterEligible(instance);
+  otNeighborInfoIterator iterator = OT_NEIGHBOR_INFO_ITERATOR_INIT;
+  otNeighborInfo neighbor;
+  unsigned neighbors = 0;
+  int weakestRssi = 0;
+  unsigned minQuality = 3;
+  while (otThreadGetNextNeighborInfo(instance, &iterator, &neighbor) == OT_ERROR_NONE) {
+    ++neighbors;
+    if (neighbor.mAverageRssi < weakestRssi) weakestRssi = neighbor.mAverageRssi;
+    if (neighbor.mLinkQualityIn < minQuality) minQuality = neighbor.mLinkQualityIn;
+  }
+  const otMacCounters *counters = otLinkGetCounters(instance);
+  const uint32_t retries = counters->mTxRetry;
+  const uint32_t ackRequested = counters->mTxAckRequested;
+  const uint32_t acked = counters->mTxAcked;
   esp_openthread_lock_release();
   Serial.printf("Thread: role=%s router_eligible=%s config_error=%u\n",
                 roleName(role), eligible ? "yes" : "no", static_cast<unsigned>(error));
+  Serial.printf("Thread radio: neighbors=%u weakest_rssi_dbm=%d min_link_quality=%u tx_retries=%lu acked=%lu requested=%lu\n",
+                neighbors, weakestRssi, neighbors ? minQuality : 0,
+                static_cast<unsigned long>(retries), static_cast<unsigned long>(acked),
+                static_cast<unsigned long>(ackRequested));
 }
 
 static void reportDoubleClap(bool ready) {
@@ -121,7 +140,9 @@ static void reportDoubleClap(bool ready) {
     Serial.println("Double clap detected; offline, event discarded.");
     return;
   }
-  Serial.println("Double clap -> Matter button click (InitialPress + ShortRelease).");
+  static uint32_t clicks = 0;
+  Serial.printf("Double clap -> Matter button click (InitialPress + ShortRelease). click=%lu uptime_ms=%lu\n",
+                static_cast<unsigned long>(++clicks), static_cast<unsigned long>(millis()));
   clapSwitch.click();
 }
 
@@ -204,12 +225,15 @@ static void processAudio(bool ready) {
       if (audio.overflows() != lastAudioOverflow) break;
       const auto result = audioDetector.process(analyzer.features(), analyzer.timeMs());
       if (result.decision != AudioClapDetector::Decision::None) {
-        if (result.decision == AudioClapDetector::Decision::Accepted) ++acceptedAudioClaps;
+        if (result.decision == AudioClapDetector::Decision::Accepted
+            || result.decision == AudioClapDetector::Decision::Restarted) ++acceptedAudioClaps;
         else if (result.decision != AudioClapDetector::Decision::Calibrated) ++rejectedAudioSounds;
         const auto &f = audioDetector.lastCandidate();
-        Serial.printf("Audio %s: rms=%.1f noise=%.1f high=%.2f flat=%.2f tone=%.2f clip=%.2f duration=%lu attack=%.1f pending=%u\n",
+        Serial.printf("Audio %s: rms=%.1f noise=%.1f high=%.2f flat=%.2f tone=%.2f bins=%u crest=%.2f clip=%.2f start=%lu duration=%lu attack=%.1f pending=%u\n",
                       AudioClapDetector::name(result.decision), f.rms, audioDetector.noiseRms(),
-                      f.highRatio, f.flatness, f.concentration, f.clippedFraction,
+                      f.highRatio, f.flatness, f.concentration, f.occupiedBins,
+                      f.peak / std::fmax(f.rms, 1e-6f), f.clippedFraction,
+                      static_cast<unsigned long>(audioDetector.candidateStartMs()),
                       static_cast<unsigned long>(audioDetector.candidateDurationMs()), audioDetector.candidateAttack(),
                       audioDetector.pendingClaps());
       }

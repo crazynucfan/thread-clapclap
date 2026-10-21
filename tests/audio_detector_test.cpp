@@ -66,6 +66,7 @@ static void fftTone() {
   const auto f = r.analyzer.features();
   require(f.concentration > 0.95f, "FFT must put a sinusoid in neighbouring bins");
   require(f.highRatio < 0.01f && f.flatness < 0.01f, "tone spectrum must not look broadband");
+  require(f.occupiedBins <= 5, "a tone must occupy only a few significant bins");
   require(f.rms > 450 && f.rms < 650, "time-domain RMS must have the expected scale");
 }
 
@@ -74,6 +75,7 @@ static void fftBroadband() {
   const auto f = r.analyzer.features();
   require(f.highRatio > 0.5f && f.concentration < 0.3f && f.flatness > 0.2f,
           "white noise must have a broadband FFT signature");
+  require(f.occupiedBins >= 20, "broadband noise must occupy many significant bins");
 }
 
 static void doubleClapAndPhase() {
@@ -226,6 +228,70 @@ static void releaseQuietIsNotBurstDuration() {
   require(events == 1, "release confirmation time must not be counted as loud burst duration");
 }
 
+// Replay measured feature ranges with explicit timing. These are regression
+// fixtures for sequence handling, not raw recordings or an accuracy benchmark.
+struct FeatureBurst {
+  uint32_t start, end;
+  float rms;
+  bool tonal = false;
+};
+
+static unsigned replayFeatures(std::initializer_list<FeatureBurst> bursts) {
+  AudioClapDetector detector;
+  detector.reset(0);
+  unsigned events = 0;
+  for (uint32_t now = 0; now <= 4400; now += 8) {
+    AudioFeatures frame;
+    frame.rms = 7;
+    for (const auto &burst : bursts) {
+      if (now < burst.start || now >= burst.end) continue;
+      frame.rms = burst.rms;
+      frame.peak = burst.rms * (burst.tonal ? 1.5f : 3.0f);
+      frame.highRatio = burst.tonal ? 0.02f : 0.4f;
+      frame.flatness = burst.tonal ? 0.02f : 0.14f;
+      frame.concentration = burst.tonal ? 0.64f : 0.23f;
+    }
+    if (detector.process(frame, now).doubleClap) ++events;
+  }
+  return events;
+}
+
+static void longToneAfterPair() {
+  require(replayFeatures({{2200, 2280, 482}, {2504, 2576, 390},
+                          {2704, 3000, 73, true}}) == 1,
+          "a long narrowband interruption must not erase two genuine claps");
+}
+
+static void longBroadbandAfterPair() {
+  require(replayFeatures({{2200, 2280, 482}, {2504, 2576, 390},
+                          {2704, 3000, 400}}) == 0,
+          "sustained broadband sound must still cancel a pending pair");
+}
+
+static void weakPrefixBeforePair() {
+  require(replayFeatures({{2200, 2224, 71}, {2504, 2584, 674},
+                          {2808, 2888, 551}}) == 1,
+          "weak unrelated sound before a real pair must not discard its first clap");
+}
+
+static void weakThirdAfterPair() {
+  require(replayFeatures({{2200, 2280, 624}, {2504, 2584, 771},
+                          {2808, 2832, 72}}) == 1,
+          "a much weaker interruption must not count as a third clap");
+}
+
+static void comparableThirdCancels() {
+  require(replayFeatures({{2200, 2280, 624}, {2504, 2584, 771},
+                          {2808, 2888, 650}}) == 0,
+          "three comparable claps must still cancel the gesture");
+}
+
+static void clapInsideWeakTone() {
+  require(replayFeatures({{2192, 2296, 60, true}, {2200, 2280, 650},
+                          {2504, 2584, 600}}) == 1,
+          "a strong clap onset during a weak tone must begin a new candidate");
+}
+
 int main() {
   const struct { const char *name; void (*run)(); } tests[] = {
     {"DC removal and silence", dcAndSilence}, {"FFT sinusoid", fftTone},
@@ -238,6 +304,12 @@ int main() {
     {"reverberant double clap", reverberantPair},
     {"measured feature bounds and tonal interruption", measuredClapSpectrumAndNoiseBetween},
     {"release quiet excluded from burst duration", releaseQuietIsNotBurstDuration},
+    {"long tone after pair", longToneAfterPair},
+    {"long broadband sound after pair", longBroadbandAfterPair},
+    {"weak prefix before pair", weakPrefixBeforePair},
+    {"weak third interruption", weakThirdAfterPair},
+    {"comparable third cancels", comparableThirdCancels},
+    {"clap onset inside weak tone", clapInsideWeakTone},
   };
   unsigned failed = 0;
   for (const auto &test : tests) {

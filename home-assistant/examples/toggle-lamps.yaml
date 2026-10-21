@@ -22,5 +22,6 @@ actions:
   - action: switch.toggle
     target:
       entity_id: switch.lamp_group
-mode: single
+mode: queued
+max: 10
 max_exceeded: silent
