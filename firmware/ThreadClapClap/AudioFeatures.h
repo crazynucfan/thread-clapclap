@@ -11,6 +11,8 @@ struct AudioFeatures {
   float concentration = 0;  // largest three neighbouring FFT bins / band power
   float flatness = 0;       // geometric / arithmetic mean of in-band bin power
   uint16_t occupiedBins = 0; // in-band bins holding at least 1/128 of band power
+  float onsetFlux = 0;     // positive L1-magnitude change / current band magnitude
+  uint16_t fluxBins = 0;   // significant bins whose magnitude more than doubled
   float clippedFraction = 0;
   float rawMean = 0;
   uint16_t rawMin = 0;
@@ -44,6 +46,7 @@ class AudioAnalyzer {
     initialized_ = false;
     previous_ = filteredQ8_ = 0;
     features_ = {};
+    for (auto &magnitude : previousMagnitude_) magnitude = 0;
   }
 
   bool push(uint16_t raw) {
@@ -146,15 +149,26 @@ class AudioAnalyzer {
       if (triplet > maxTriplet) maxTriplet = triplet;
     }
     if (total) {
+      uint64_t magnitudeSum = 0, positiveChange = 0;
       for (size_t i = firstBin; i <= lastBin; ++i) {
         if (power_[i] * 128 >= total) ++features_.occupiedBins;
+        // L1 magnitude avoids 117 square roots per frame on the C6.
+        const uint32_t magnitude = static_cast<uint32_t>(
+            (real_[i] < 0 ? -real_[i] : real_[i]) + (imag_[i] < 0 ? -imag_[i] : imag_[i]));
+        magnitudeSum += magnitude;
+        if (magnitude > previousMagnitude_[i]) positiveChange += magnitude - previousMagnitude_[i];
+        if (power_[i] * 128 >= total && magnitude > previousMagnitude_[i] * 2) ++features_.fluxBins;
+        previousMagnitude_[i] = magnitude;
       }
+      features_.onsetFlux = magnitudeSum ? static_cast<float>(positiveChange) / magnitudeSum : 0;
       constexpr float bins = lastBin - firstBin + 1;
       features_.highRatio = static_cast<float>(high) / total;
       features_.concentration = static_cast<float>(maxTriplet) / total;
       // One exponential per frame; the 117 logarithms use the integer LUT.
       features_.flatness = std::exp2(logSum / (bins * 256)) / (total / bins);
       if (features_.flatness > 1) features_.flatness = 1;
+    } else {
+      for (auto &magnitude : previousMagnitude_) magnitude = 0;
     }
   }
 
@@ -163,6 +177,7 @@ class AudioAnalyzer {
   int32_t signal_[size]{}, real_[size]{}, imag_[size]{};
   uint16_t raw_[size]{};
   uint64_t power_[size / 2 + 1]{};
+  uint32_t previousMagnitude_[size / 2 + 1]{};
   size_t cursor_ = 0, filled_ = 0, sinceFrame_ = 0;
   uint64_t samples_ = 0;
   bool initialized_ = false;

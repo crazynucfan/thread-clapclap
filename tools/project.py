@@ -2,6 +2,7 @@
 """Build, test and flash Thread ClapClap using the pinned Arduino ESP32 core."""
 
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -48,6 +49,7 @@ def main():
             run([compiler, "-std=c++17", "-Wall", "-Wextra", "-Werror", "-pedantic",
                  source, "-o", binary])
             run([binary])
+        run([sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", "*_test.py"])
         return
 
     if not shutil.which(args.cli):
@@ -69,7 +71,13 @@ def main():
         if not any(p.get("id") == "esp32:esp32" and p.get("installed_version") == CORE for p in platforms):
             parser.error(f"Arduino ESP32 {CORE} is required; run tools/project.py setup first")
         if args.command == "build":
-            run(cli + ["compile", "--fqbn", FQBN, "--build-path", args.build_dir.resolve(),
+            digest = hashlib.sha256()
+            for name in ("ImpulseClapDetector.h", "Config.h"):
+                digest.update((SKETCH / name).read_bytes())
+            detector_id = int(digest.hexdigest()[:8], 16)
+            run(cli + ["compile", "--fqbn", FQBN,
+                       "--build-property", f"compiler.cpp.extra_flags=-DCLAP_DETECTOR_BUILD_ID={detector_id}u",
+                       "--build-path", args.build_dir.resolve(),
                        "--output-dir", OUTPUT, SKETCH])
         elif args.command == "flash":
             if not (OUTPUT / "ThreadClapClap.ino.bin").is_file():

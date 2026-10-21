@@ -2,17 +2,18 @@
 
 A four-wire, USB-powered **double-clap button for Home Assistant**, using a
 Seeed XIAO ESP32-C6 and Waveshare Sound Sensor. An analog audio detector uses
-adaptive thresholds and FFT features to recognise short broadband bursts. Two matching bursts send one Matter Generic Switch
+adaptive thresholds, FFT onset flux, and burst-shape scoring to recognise short impulses. Two matching bursts send one Matter Generic Switch
 click over Thread. The firmware also enables Thread
 router eligibility to let the device help relay mesh traffic.
 
-**Status:** the analog FFT firmware compiles with Arduino ESP32 **3.3.12**,
-and all **45 host tests** pass. The earlier digital version was flashed,
-commissioned into Home Assistant, and automatically became a Thread router.
-The analog version has also delivered a real double-clap event through
-Home Assistant to the lamp group. Recognition is still being tuned; real-room
-precision and recall have not been measured. This is an
-MIT-licensed community prototype, not a certified Matter product.
+**Status:** the current burst-scoring firmware builds with Arduino ESP32
+**3.3.12**. All **73 automated checks** pass: 62 native C++ checks (including
+45 retained legacy checks) and eleven capture/replay checks. Earlier firmware
+was commissioned into Home Assistant, became a Thread router, and delivered
+physical double-clap events, but subsequent trials frequently missed. The new
+classifier and feature-capture workflow address that failure; real-room
+recognition and false-trigger rates still need labelled validation. This is
+an MIT-licensed community prototype, not a certified Matter product.
 
 ## 1. Connect the hardware
 
@@ -182,107 +183,92 @@ streaming filter and FFT use fixed-point integer arithmetic because the C6
 has no floating-point unit; final diagnostic features are floating point. Samples stay
 in a small RAM buffer; audio is not recorded to storage or transmitted.
 
-The detector combines several tests, rather than treating an FFT as a clap
-classifier:
+The default detector now scores the **attack and envelope of a burst**:
 
-1. A high-pass filter removes DC bias and attenuates low-frequency rumble.
-2. An adaptive room-noise estimate sets the amplitude threshold. A sound must
-   exceed both an absolute RMS floor and a multiple of the noise RMS.
-3. A sudden onset and a short duration are required. Sustained or slowly
-   rising sound is rejected, then the detector rearms after the background settles.
-   The release threshold follows 25% of the burst peak so quiet reverberation
-   does not extend an otherwise short clap indefinitely.
-4. The **loudest frame** must have enough high-frequency content and a spread
-   of FFT energy. Spectral flatness and concentration reject narrowband tones;
-   crest factor rejects a smooth sine wave and isolated electrical spikes.
-   A strong burst with at least 20 significant bins can support a pair despite
-   low flatness, provided its RMS is at least 150 counts and 12 times ambient
-   noise and its concentration is at most 0.40. Timing, high-band content,
-   crest, and clipping checks still apply.
-5. Clipped bursts are rejected because saturation corrupts the spectral tests.
-6. Two accepted bursts must arrive roughly 160-600 ms apart and have reasonably
-   similar strength and spectral balance. At least one must pass the strict
-   flatness check; two low-flatness bursts cannot trigger on their own. Either
-   burst can supply the strict evidence. A third comparable burst cancels the pair.
+1. The adaptive ambient RMS estimate gates candidate sounds. A sudden rise and
+   a peak within 40 ms are required.
+2. Positive **spectral flux** measures how much frequency-bin magnitude rises
+   between adjacent FFT frames. Significant bins that more than double add
+   evidence for a broad onset. The fixed-point path uses L1 magnitude to avoid
+   a square root per bin on the C6.
+3. During the first 32 ms, the detector gathers spectral evidence across frames:
+   occupied bins, rising bins, flatness, concentration, and high-band energy.
+   It uses the best eligible attack frame, weighted by its RMS relative to
+   the final peak. This limits evidence contributed by weak precursors.
+4. It measures the share of above-noise frame energy in that attack window.
+   This describes front-loaded impulses and their decay.
+5. A weighted score combines SNR (20%), attack (20%), flux (20%), spectral
+   evidence (25%), and front energy (15%). Default acceptance is 0.70. The
+   weights are engineering defaults awaiting real-room calibration, not a
+   trained or probabilistically calibrated confidence model.
+6. Clipping, extreme crest factor, slow peaks, low spectral evidence, and
+   excessive duration still reject candidates. A single low-flatness or
+   low-high-band frame no longer vetoes an otherwise convincing impulse.
+7. Two accepted candidates must arrive 160–599 ms apart with compatible
+   strength and high-band balance. Comparable third candidates cancel the
+   gesture; much weaker interruptions are ignored. A much stronger/different
+   candidate restarts the sequence. Echoes inside the lockout are ignored.
 
-The event still waits for the 600 ms window after the second onset to close,
-and Home Assistant still sees **one button click**, so the same automation
-blueprint works. Sustained broadband noise and clipping clear pending claps.
-Rejected tones preserve pending claps. A much weaker candidate is ignored; a
-stronger or spectrally different candidate starts a new sequence, allowing a
-genuine pair to follow unrelated sound. A fresh strong onset can also interrupt
-a weak background candidate. Echo tails inside the 160 ms lockout do not
-erase a genuine first clap. The supplied automations queue up to ten runs so
-closely delivered clicks can each execute their action. Data loss resets the
-stream and calibration; there is no automatic fallback to the less selective
-DOUT-only detector. Offline gestures are discarded.
+One Matter click is emitted after the 600 ms window following the second
+onset closes. Sustained broadband noise or clipping cancels pending claps;
+rejected tonal backgrounds preserve them. Stream loss and connection changes
+clear the gesture and recalibrate. Offline gestures are discarded.
 
-These are tunable **heuristics**, not a trained clap recogniser. A short
-broadband door slam, hand tap, or recorded clap can resemble a genuine clap.
-Synthetic tests establish expected algorithm behaviour; they do not measure
-real-world precision or recall. The LM386 module also has no audio anti-alias
-filter specified by this project, so the frequency features are approximate.
+These remain **heuristics**. Short taps, slams, or recorded claps can resemble
+hand claps. The module has no audio anti-alias filter specified by this
+project. Synthetic checks do not establish precision or recall.
 
-### Read the diagnostics before changing thresholds
+### Capture and replay before tuning
 
-Every two seconds the console prints the input RMS, adaptive noise estimate,
-raw ADC bias/range, clipping fraction, counters, DMA overflows, and the maximum
-processing time for a 128-sample batch. Each completed candidate prints its
-classification, for example `accepted`, `rejected_spectrum`,
-`rejected_slow_attack`, `rejected_clipping`, `rejected_duration`, or
-`restarted_stronger_or_different`, `ignored_weaker`, or `rejected_pair_spectrum`.
-The last means two candidate bursts lacked strict spectral evidence. Thread status also
-reports neighbour signal/link quality and MAC acknowledgement/retry counters;
-a connected router status alone does not prove timely Matter delivery.
+The [calibration guide](docs/audio-calibration.md) explains how to capture
+**every FFT feature frame**, label positive and negative trials, and replay
+both the new and previous classifier without reflashing. Captures contain
+summary features, not waveform samples, and stay in the ignored `.local/`
+directory. USB is needed for calibration only; normal detection runs on the
+board with USB power and Matter over Thread.
 
-The `high`, `flat`, and `tone` fields are ratios, not calibrated sound levels.
-`bins` counts in-band FFT bins holding at least 1/128 of total band power;
-`crest` is peak divided by RMS. `strict=yes` means the loudest frame passed
-all strict spectral/crest checks; `accepted` marks an individual candidate,
-not a complete gesture. Both `strict=no` candidates can be accepted without
-producing a click. These fields help explain spectral rejections.
-`raw` and `range` are ADC counts, not millivolts. `max_batch_us` includes
-classification/logging time and task preemption; it is a diagnostic, not a
-hard real-time deadline guarantee. Repeated DMA overflows mean the stream is
-not keeping up and need fixing before acoustic results can be trusted.
+Capture mode suppresses Matter clicks. CRC, sequence, sample-clock, and
+completion checks reject interrupted or lossy captures. The build helper
+embeds a detector-source fingerprint so replay can check the live firmware's
+click count when the source/configuration matches.
 
-Start with two claps about **300 ms apart**, then pause for a second. The gain adjuster is the **small white screw marked A beside the round
-microphone**. Use a precision screwdriver with a small flat blade that fits
-the slot (roughly 1-2 mm), and turn it gently in small steps. Adjust
-**A gain** on the Waveshare board so claps are clear without
-`rejected_clipping` messages. The **D threshold potentiometer does not set the
-analog classifier's sensitivity**; it affects DOUT, which analog mode does
-not use to approve gestures. If the ADC stays near a rail or the input never
-changes, check the blue AOUT → D0 connection.
+### Read the diagnostics
 
-The defaults live in `AudioClapDetector::Config` in
-[`AudioClapDetector.h`](firmware/ThreadClapClap/AudioClapDetector.h). Override
-fields through `audioDetector` in `Config.h`, then rebuild and flash:
+Normal serial output includes `score`, `spectral`, `flux`, `front`, `rise`,
+`attack`, and `pending`. The score is weighted evidence, not a probability.
+The displayed spectrum belongs to the loudest frame; the classifier also
+uses earlier attack frames. Each rejection identifies confidence, spectrum,
+crest, attack, clipping, or duration. Status lines include DMA overflows and
+maximum processing time per 128-sample batch. Repeated overflows must be
+resolved before recognition results can be trusted.
+
+The defaults live in `ImpulseClapDetector::Config`; override them through
+`audioDetector` in [Config.h](firmware/ThreadClapClap/Config.h), rebuild, and
+replay held-out captures before another physical trial.
 
 | Parameter | Default | Effect |
 | --- | --- | --- |
-| `calibrationMs` | 2000 | Quiet startup learning period |
-| `minRms` | 18 counts | Minimum absolute sound amplitude |
-| `noiseMultiplier` | 4 | Minimum amplitude relative to ambient RMS |
-| `attackRatio` | 2.2 | Required abrupt rise |
-| `minHighRatio` | 0.15 | Minimum 1.5-7.5 kHz share of 250 Hz-7.5 kHz energy |
-| `maxConcentration` | 0.55 | Maximum energy share in three neighbouring bins |
-| `minFlatness` | 0.08 | Strict spectral flatness; at least one clap per pair must pass |
-| `minSpreadBins` | 20 | Significant bins required to support a low-flatness burst |
-| `minSpreadRms` | 150 counts | Absolute RMS floor for low-flatness support |
-| `spreadNoiseMultiplier` | 12 | Ambient-noise margin for low-flatness support |
-| `maxSpreadConcentration` | 0.40 | Concentration limit for low-flatness support |
+| `calibrationMs` | 2000 ms | Quiet startup learning |
+| `minRms` / `noiseMultiplier` | 18 / 4 | Absolute and ambient-relative gates |
+| `minAttack` / `maxRiseMs` | 2.2 / 40 ms | Sudden onset and prompt peak |
+| `attackWindowMs` | 32 ms | Early spectral evidence and energy window |
+| `minScore` / `minSpectralScore` | 0.70 / 0.25 | Overall and spectral evidence floors |
 | `minCrest` / `maxCrest` | 1.7 / 12 | Peak-to-RMS bounds |
-| `maxClippedFraction` | 0.05 | Maximum near-rail sample fraction |
-| `peakReleaseRatio` | 0.25 | Release after RMS falls below 25% of the peak |
-| `maxBurstMs` / `quietMs` | 120 / 24 ms | Maximum burst and release quiet time |
-| `minClapGapMs` / `sequenceGapMs` | 160 / 600 ms | Double-clap timing |
-| `maxPairRmsRatio` | 4 | Maximum strength ratio between the two bursts |
-| `maxPairHighDifference` | 0.35 | Maximum high-frequency balance difference |
+| `maxClippedFraction` | 0.05 | Near-rail sample limit |
+| `peakReleaseRatio` | 0.25 | Peak-relative release level |
+| `maxBurstMs` / `quietMs` | 120 / 24 ms | Burst limit and release confirmation |
+| `minClapGapMs` / `sequenceGapMs` | 160 / 600 ms | Echo lockout and pairing window |
+| `maxPairRmsRatio` / `maxPairHighDifference` | 4 / 0.35 | Pair consistency |
 
-For the original digital mode, `config::detector` still sets the 40 ms quiet
-period, 120 ms maximum burst, 160 ms echo lockout, and 600 ms sequence timeout.
-Its DOUT edge queue and previous behaviour remain available for comparison.
+Start with claps roughly 300 ms apart. The sensor's **A gain** screw beside
+its microphone takes a small precision flat screwdriver (roughly 1–2 mm).
+Use small adjustments only if the measurements show inadequate signal or
+clipping. The **D threshold** screw affects DOUT, not the analog classifier.
+If input is stuck or near a rail, check the blue AOUT → D0 connection.
+
+The older hard-gated analog classifier remains in `AudioClapDetector.h` for
+replay comparison. Original DOUT-only mode remains selectable through
+`config::useAnalogAudio = false`, using `config::detector` timing.
 
 ## Thread router behaviour
 
@@ -308,19 +294,15 @@ your existing Border Router to connect Thread to the Home Assistant LAN.
 python3 tools/project.py test
 ```
 
-The **45 host tests** include the original 14 digital tests plus 31 analog
-analysis/classification tests. Analog fixtures cover DC removal, a sinusoid's
-FFT/RMS, broadband noise, valid pairs across window alignments, ignored singles
-and triples, tonal and low-frequency pairs, sustained noise and recovery,
-slow attacks, clipping, electrical spikes, mismatched pairs, echoes, resets,
-and `millis()` rollover. They also cover reverberant clap tails and a feature
-fixture based on the first physical clap test, exclusion of release-quiet
-time from burst duration, and feature timelines with weak precursors, tonal
-interruptions, strong onsets inside background sound, and a third burst.
-A later labelled pair supplies a regression for uneven spectral flatness;
-additional cases require a strict anchor, reject weak/narrow/low-SNR support,
-and prevent reuse of strict evidence after a sequence restart or timeout. These tests are not a recorded
-real-room accuracy benchmark.
+The **73 automated checks** retain the original 14 digital and 31 analog
+checks, add 17 burst-classifier/protocol checks, and run eleven Python checks for
+capture integrity and native replay. New signal fixtures exercise coloured
+claps, FFT alignment, positive onset flux, reverberation, singles/triples,
+echoes, tones, clipping, electrical spikes, slow peaks, sustained backgrounds,
+pair consistency, weak interruptions, recovery, and sample-clock rollover.
+Capture checks cover fragmented reads, CRC corruption, missing frames, clock
+gaps/wrap, invalid features, incomplete sessions, and agreement with a native
+C++ replay fixture. These are not recorded real-room accuracy measurements.
 
 Analog mode uses ADC DMA with bounded processing batches. The main loop
 performs the FFT and detection and submits Matter clicks outside interrupt

@@ -2,6 +2,11 @@
 
 #include "ClapDetector.h"
 #include "AudioClapDetector.h"
+#include "ImpulseClapDetector.h"
+
+#ifndef CLAP_DETECTOR_BUILD_ID
+#define CLAP_DETECTOR_BUILD_ID 0u // IDE builds remain replayable, without a verified source fingerprint
+#endif
 
 namespace config {
 // Analog FFT filtering is the default. Set false to use the original DOUT mode.
@@ -13,7 +18,7 @@ constexpr uint8_t resetButtonPin = 9;  // XIAO BOOT; hold after normal startup
 constexpr uint32_t factoryResetHoldMs = 5000;
 constexpr uint32_t startupQuietMs = 1500;
 constexpr ClapDetector::Config detector{40, 120, 160, 600};
-constexpr AudioClapDetector::Config audioDetector{};
+constexpr ImpulseClapDetector::Config audioDetector{};
 static_assert(!useAnalogAudio || audioPin != soundPin, "AOUT and DOUT must use separate pins in analog mode");
 static_assert(detector.quietMs < detector.minClapGapMs, "Quiet period must fit between claps");
 static_assert(detector.maxBurstMs < detector.minClapGapMs, "A burst must be shorter than the clap gap");

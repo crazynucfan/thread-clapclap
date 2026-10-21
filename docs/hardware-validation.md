@@ -202,3 +202,43 @@ Do not include Thread credentials or device storage.
   positive and negative examples is required; passing synthetic tests is
   insufficient evidence of detector accuracy. No classifier thresholds were
   changed during this verification.
+
+### 2026-10-21: attack-window scoring and feature capture
+
+- The user chose to continue clap detection with the existing hardware.
+- The default analog classifier now combines positive FFT flux, the number of
+  rising significant bins, amplitude-weighted spectral evidence across an
+  attack window, rise time, and the burst's early-energy fraction. The previous
+  single loudest-frame flatness/high-band vetoes are replaced by a weighted
+  score, while clipping, crest, duration, echo, triple, and pair checks remain.
+- A weak broadband precursor's spectral/flux evidence is attenuated as a later
+  peak grows. Signal fixtures cover both rejection of a weak precursor before
+  a tonal burst and acceptance of a strong broadband attack followed by ringing.
+- Added complete feature capture over USB and replay using the same C++ detector
+  and configuration as firmware. Captures suppress Matter actions, retain no
+  waveform audio, and stay in the ignored local directory. CRC, sequence,
+  sample-clock, and completion checks reject lossy data. Source/configuration
+  fingerprints permit live-versus-replay click-count comparisons.
+- All 73 automated checks pass (45 retained legacy, 17 burst/protocol, eleven
+  Python capture/replay), and the new native suite passes undefined-behaviour
+  sanitization. The build uses 2,687,452 bytes of flash and 144,276 bytes of
+  static RAM, leaving 183,404 bytes of static allocation headroom. Runtime heap
+  availability is separate from that linker figure.
+- Upload succeeded without erasing commissioning. The first instrumentation
+  run reattached as a router and reported zero DMA overflows. A capture attempt
+  interrupted by a link change was correctly marked incomplete. Capture start
+  now waits for Thread attachment and still invalidates a subsequent link loss.
+- These engineering weights are not a trained confidence model. Labelled
+  physical positive and negative sessions and held-out comparisons remain
+  necessary; no recognition rate is claimed from synthetic checks.
+
+- A final ten-second unlabelled ambient capture contained all 1,250 frames,
+  consecutive sequence numbers, valid CRCs, and 8ms sample-clock increments.
+  The source/configuration fingerprint matched. Replaying the same C++ detector
+  returned the on-board count exactly (zero pairs). Legacy replay also returned
+  zero. This verifies the instrumentation path, not a false-positive rate:
+  the ambient sounds were not labelled. Real data stays ignored and private.
+
+- After the final capture, live diagnostics again showed retained commissioning,
+  router role, zero DMA overflows, and a maximum processed-batch time of 3,922us
+  over that observation. This is an observed maximum, not a real-time guarantee.

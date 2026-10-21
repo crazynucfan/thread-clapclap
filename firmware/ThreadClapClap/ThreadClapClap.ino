@@ -21,18 +21,57 @@
 
 #include "Config.h"
 #include "AnalogAudio.h"
+#include "AudioCapture.h"
 
 MatterGenericSwitch clapSwitch;
 ClapDetector detector(config::detector);
 AnalogAudio audio;
 AudioAnalyzer analyzer;
-AudioClapDetector audioDetector(config::audioDetector);
+ImpulseClapDetector audioDetector(config::audioDetector);
 uint32_t lastAudioOverflow = 0;
 uint32_t lastAudioStatus = 0;
 uint32_t analyzedFrames = 0;
 uint32_t acceptedAudioClaps = 0;
 uint32_t rejectedAudioSounds = 0;
 uint32_t maxAnalysisUs = 0;
+uint32_t captureSession = 0, captureRemaining = 0, captureSequence = 0, captureDropped = 0, captureClicks = 0;
+bool capturePending = false;
+
+static void abortCapture(const char *reason) {
+  if (captureRemaining) Serial.printf("CAPTURE_ABORT %lu %s\n", static_cast<unsigned long>(captureSession), reason);
+  capturePending = false;
+  captureRemaining = 0;
+}
+
+static void handleSerialCommands() {
+  static char line[64];
+  static size_t length = 0;
+  static bool tooLong = false;
+  for (unsigned budget = 0; budget < 64 && Serial.available(); ++budget) {
+    const char c = static_cast<char>(Serial.read());
+    if (c == '\r') continue;
+    if (c != '\n') {
+      if (length < sizeof(line) - 1) line[length++] = c;
+      else tooLong = true;
+      continue;
+    }
+    line[length] = 0;
+    unsigned long session = 0, seconds = 0;
+    char extra = 0;
+    if (!tooLong && strcmp(line, "CAPTURE_STOP") == 0) {
+      abortCapture("stopped");
+      audioDetector.reset(analyzer.timeMs());
+    } else if (!tooLong && sscanf(line, "CAPTURE %lu %lu %c", &session, &seconds, &extra) == 2
+               && session && seconds >= 4 && seconds <= 600 && config::useAnalogAudio) {
+      abortCapture("replaced");
+      captureSession = static_cast<uint32_t>(session);
+      captureRemaining = static_cast<uint32_t>(seconds * 125);
+      captureSequence = captureDropped = captureClicks = 0;
+      capturePending = true;
+    } else if (length) Serial.println("CAPTURE_ERROR expected CAPTURE <nonzero-id> <4..600 seconds> or CAPTURE_STOP");
+    length = 0; tooLong = false;
+  }
+}
 
 // Capture both edges: even very short LOW pulses reach the detector. No logging
 // or Matter calls in the ISR. Drop the whole partial gesture on queue overflow.
@@ -188,6 +227,7 @@ static void processSound(bool ready) {
 static void processAudio(bool ready) {
   const uint32_t overflows = audio.overflows();
   if (overflows != lastAudioOverflow) {
+    abortCapture("dma_overflow");
     lastAudioOverflow = overflows;
     analyzer.reset();
     audioDetector.reset(0);
@@ -197,6 +237,7 @@ static void processAudio(bool ready) {
     return;
   }
   if (ready != lastReady) {
+    if (!capturePending) abortCapture("connection_changed");
     audioDetector.reset(analyzer.timeMs());
     lastReady = ready;
     Serial.println("Connection changed: clear pending audio gesture and recalibrate for 2s.");
@@ -208,6 +249,7 @@ static void processAudio(bool ready) {
     const esp_err_t error = audio.read(samples, count);
     if (error == ESP_ERR_TIMEOUT) break;
     if (error == ESP_ERR_INVALID_STATE) {
+      abortCapture("stream_overrun");
       analyzer.reset();
       audioDetector.reset(0);
       if (audio.recover() != ESP_OK) fatal("FATAL: ADC overrun recovery failed.");
@@ -223,22 +265,43 @@ static void processAudio(bool ready) {
       if (!analyzer.push(samples[i])) continue;
       ++analyzedFrames;
       if (audio.overflows() != lastAudioOverflow) break;
+      if (capturePending && ready) {
+        capturePending = false;
+        audioDetector.reset(analyzer.timeMs());
+        Serial.printf("CAPTURE_BEGIN %lu %lu %lu %lu\n", static_cast<unsigned long>(captureSession),
+                      static_cast<unsigned long>(captureRemaining), static_cast<unsigned long>(analyzer.timeMs()),
+                      static_cast<unsigned long>(CLAP_DETECTOR_BUILD_ID));
+      }
+      const bool capturing = captureRemaining != 0 && !capturePending;
       const auto result = audioDetector.process(analyzer.features(), analyzer.timeMs());
-      if (result.decision != AudioClapDetector::Decision::None) {
-        if (result.decision == AudioClapDetector::Decision::Accepted
-            || result.decision == AudioClapDetector::Decision::Restarted) ++acceptedAudioClaps;
-        else if (result.decision != AudioClapDetector::Decision::Calibrated) ++rejectedAudioSounds;
+      if (result.decision != ImpulseClapDetector::Decision::None && !capturing) {
+        if (result.decision == ImpulseClapDetector::Decision::Accepted
+            || result.decision == ImpulseClapDetector::Decision::Restarted) ++acceptedAudioClaps;
+        else if (result.decision != ImpulseClapDetector::Decision::Calibrated) ++rejectedAudioSounds;
         const auto &f = audioDetector.lastCandidate();
-        Serial.printf("Audio %s: rms=%.1f noise=%.1f high=%.2f flat=%.2f tone=%.2f bins=%u crest=%.2f strict=%s clip=%.2f start=%lu duration=%lu attack=%.1f pending=%u\n",
-                      AudioClapDetector::name(result.decision), f.rms, audioDetector.noiseRms(),
+        Serial.printf("Audio %s: rms=%.1f noise=%.1f high=%.2f flat=%.2f tone=%.2f bins=%u crest=%.2f score=%.3f spectral=%.3f flux=%.3f front=%.3f clip=%.2f start=%lu duration=%lu rise=%lu attack=%.1f pending=%u\n",
+                      ImpulseClapDetector::name(result.decision), f.rms, audioDetector.noiseRms(),
                       f.highRatio, f.flatness, f.concentration, f.occupiedBins,
                       f.peak / std::fmax(f.rms, 1e-6f),
-                      audioDetector.candidateHasStrictSpectrum() ? "yes" : "no", f.clippedFraction,
+                      audioDetector.candidateScore(), audioDetector.candidateSpectralScore(),
+                      audioDetector.candidateFlux(), audioDetector.candidateFrontRatio(), f.clippedFraction,
                       static_cast<unsigned long>(audioDetector.candidateStartMs()),
-                      static_cast<unsigned long>(audioDetector.candidateDurationMs()), audioDetector.candidateAttack(),
+                      static_cast<unsigned long>(audioDetector.candidateDurationMs()),
+                      static_cast<unsigned long>(audioDetector.candidateRiseMs()), audioDetector.candidateAttack(),
                       audioDetector.pendingClaps());
       }
-      if (result.doubleClap && audio.overflows() == lastAudioOverflow) reportDoubleClap(ready);
+      if (capturing) {
+        const auto packet = captureFrame(analyzer.features(), captureSession, captureSequence++, analyzer.timeMs(), millis());
+        if (Serial.availableForWrite() < static_cast<int>(sizeof(packet))
+            || Serial.write(reinterpret_cast<const uint8_t *>(&packet), sizeof(packet)) != sizeof(packet)) ++captureDropped;
+        if (result.doubleClap) ++captureClicks;
+        if (--captureRemaining == 0) {
+          Serial.printf("CAPTURE_END %lu %lu %lu %lu\n", static_cast<unsigned long>(captureSession),
+                        static_cast<unsigned long>(captureSequence), static_cast<unsigned long>(captureDropped),
+                        static_cast<unsigned long>(captureClicks));
+          audioDetector.reset(analyzer.timeMs());
+        }
+      } else if (result.doubleClap && !capturePending && audio.overflows() == lastAudioOverflow) reportDoubleClap(ready);
     }
     const uint32_t duration = micros() - startedUs;
     if (duration > maxAnalysisUs) maxAnalysisUs = duration;
@@ -247,7 +310,7 @@ static void processAudio(bool ready) {
     if (audio.overflows() != lastAudioOverflow) break;
   }
   const uint32_t now = millis();
-  if (now - lastAudioStatus >= 2000) {
+  if (!captureRemaining && now - lastAudioStatus >= 2000) {
     lastAudioStatus = now;
     const auto &f = analyzer.features();
     Serial.printf("Audio status: frames=%lu rms=%.1f noise=%.1f raw=%.0f range=%u..%u clip=%.2f accepted=%lu rejected=%lu dma_overflows=%lu max_batch_us=%lu\n",
@@ -309,7 +372,7 @@ void setup() {
     }
     analyzer.reset();
     audioDetector.reset(0);
-    Serial.printf("Analog FFT mode: AOUT -> GPIO%u, 16kHz / 256 samples / 50%% overlap. Keep quiet for 2s.\n", config::audioPin);
+    Serial.printf("Analog burst-score mode: AOUT -> GPIO%u, 16kHz / 256 samples / 50%% overlap. Keep quiet for 2s.\n", config::audioPin);
   } else {
     detector.reset(detectionStarted, digitalRead(config::soundPin) == LOW);
     attachInterrupt(digitalPinToInterrupt(config::soundPin), captureSoundEdge, CHANGE);
@@ -325,11 +388,12 @@ void loop() {
   const bool commissioned = Matter.isDeviceCommissioned();
   const bool ready = commissioned && Matter.isThreadConnected();
   chip::DeviceLayer::PlatformMgr().UnlockChipStack();
+  handleSerialCommands();
   if (config::useAnalogAudio) processAudio(ready);
   else processSound(ready);
   handleFactoryReset();
   const uint32_t now = millis();
-  if (now - lastStatus >= 10000) {
+  if (!captureRemaining && now - lastStatus >= 10000) {
     lastStatus = now;
     Serial.printf("Matter: commissioned=%s connected=%s DOUT=%s overflows=%lu\n",
                   commissioned ? "yes" : "no", ready ? "yes" : "no",
