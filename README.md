@@ -11,7 +11,8 @@ router eligibility to let the device help relay mesh traffic.
 45 retained legacy checks) and eleven capture/replay checks. Earlier firmware
 was commissioned into Home Assistant, became a Thread router, and delivered
 physical double-clap events, but subsequent trials frequently missed. A labelled physical pair passed the new classifier and was missed by the old
-one on the same captured frames. A separate speech/tapping stress trial
+one on the same captured frames. A subsequent live pair also delivered a
+button event to Home Assistant. A separate speech/tapping stress trial
 produced one false trigger with each classifier. Installation-room recognition
 and false-trigger rates still need validation. This is
 an MIT-licensed community prototype, not a certified Matter product.

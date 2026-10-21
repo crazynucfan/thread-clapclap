@@ -267,3 +267,17 @@ Do not include Thread credentials or device storage.
   One successful positive plus one failed stress negative does not establish
   repeatability or a false-trigger rate. Real feature captures remain private
   under the ignored local directory.
+
+### 2026-10-21: live delivery after capture validation
+
+- A subsequent live double clap was accepted with onsets 240ms apart, peak
+  RMS 275.6 and 542.2, and burst scores 0.828 and 0.817 (cutoff 0.70).
+- The board emitted a Matter click and Home Assistant recorded its InitialPress
+  and ShortRelease. This verifies live button delivery for this trial; the lamp
+  group was still unavailable, so no physical lamp toggle is claimed.
+- The device remained commissioned, attached as a router, and reported zero
+  DMA overflows. The sensor's physical placement was not independently verified.
+- These valid scores are lower than the first labelled positive pair. Retaining
+  the cutoff avoids rejecting this trial solely to fit the earlier typing stress
+  negative. Repeated installation-room positives and background tests remain
+  necessary before claiming reliable recognition.
