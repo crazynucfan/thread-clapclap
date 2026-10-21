@@ -234,22 +234,28 @@ struct FeatureBurst {
   uint32_t start, end;
   float rms;
   bool tonal = false;
+  float flatness = 0.14f;
+  uint16_t occupiedBins = 26;
+  float highRatio = 0.4f;
+  float concentration = 0.23f;
+  float crest = 3;
 };
 
-static unsigned replayFeatures(std::initializer_list<FeatureBurst> bursts) {
+static unsigned replayFeatures(std::initializer_list<FeatureBurst> bursts, float ambientRms = 7) {
   AudioClapDetector detector;
   detector.reset(0);
   unsigned events = 0;
   for (uint32_t now = 0; now <= 4400; now += 8) {
     AudioFeatures frame;
-    frame.rms = 7;
+    frame.rms = ambientRms;
     for (const auto &burst : bursts) {
       if (now < burst.start || now >= burst.end) continue;
       frame.rms = burst.rms;
-      frame.peak = burst.rms * (burst.tonal ? 1.5f : 3.0f);
-      frame.highRatio = burst.tonal ? 0.02f : 0.4f;
-      frame.flatness = burst.tonal ? 0.02f : 0.14f;
-      frame.concentration = burst.tonal ? 0.64f : 0.23f;
+      frame.peak = burst.rms * (burst.tonal ? 1.5f : burst.crest);
+      frame.highRatio = burst.tonal ? 0.02f : burst.highRatio;
+      frame.flatness = burst.tonal ? 0.02f : burst.flatness;
+      frame.concentration = burst.tonal ? 0.64f : burst.concentration;
+      frame.occupiedBins = burst.tonal ? 3 : burst.occupiedBins;
     }
     if (detector.process(frame, now).doubleClap) ++events;
   }
@@ -292,6 +298,58 @@ static void clapInsideWeakTone() {
           "a strong clap onset during a weak tone must begin a new candidate");
 }
 
+static void measuredUnevenSpectrumPair() {
+  // Labelled physical pair: 296ms apart, zero clipping; only the second
+  // burst failed the old flatness gate. Preserve the measured feature bounds.
+  require(replayFeatures({{2200, 2264, 482.8f, false, 0.16f, 26, 0.21f, 0.29f, 3.04f},
+                          {2496, 2544, 425.3f, false, 0.03f, 23, 0.16f, 0.36f, 3.83f}}) == 1,
+          "a strong spread-spectrum companion must support the measured pair");
+}
+
+static void spreadFirstStrictSecond() {
+  require(replayFeatures({{2200, 2248, 425.3f, false, 0.03f, 23, 0.16f, 0.36f, 3.83f},
+                          {2496, 2560, 482.8f, false, 0.16f, 26, 0.21f, 0.29f, 3.04f}}) == 1,
+          "strict spectral evidence may occur in either clap");
+}
+
+static void spreadPairNeedsStrictEvidence() {
+  require(replayFeatures({{2200, 2248, 425, false, 0.03f, 23},
+                          {2496, 2544, 425, false, 0.03f, 23}}) == 0,
+          "two low-flatness candidates without strict evidence must not trigger");
+}
+
+static void weakSpreadCannotSupportPair() {
+  require(replayFeatures({{2200, 2248, 300},
+                          {2496, 2544, 100, false, 0.03f, 23}}) == 0,
+          "weak low-flatness sound must not use the spread-spectrum path");
+}
+
+static void narrowSpreadCannotSupportPair() {
+  require(replayFeatures({{2200, 2248, 425},
+                          {2496, 2544, 425, false, 0.03f, 8}}) == 0,
+          "a low-flatness sound concentrated in few bins must remain rejected");
+}
+
+static void restartCannotCarryStrictEvidence() {
+  require(replayFeatures({{2200, 2248, 160},
+                          {2496, 2544, 800, false, 0.03f, 23},
+                          {2792, 2840, 800, false, 0.03f, 23}}) == 0,
+          "strict evidence from a discarded precursor must not authorise a later pair");
+}
+
+static void spreadMustClearAmbientNoise() {
+  require(replayFeatures({{2200, 2248, 800},
+                          {2496, 2544, 250, false, 0.03f, 23}}, 30) == 0,
+          "spread-spectrum support must clear the stricter ambient-noise margin");
+}
+
+static void expiredSequenceCannotCarryStrictEvidence() {
+  require(replayFeatures({{2200, 2248, 425},
+                          {3000, 3048, 425, false, 0.03f, 23},
+                          {3296, 3344, 425, false, 0.03f, 23}}) == 0,
+          "a new pair must not reuse strict evidence from an expired single clap");
+}
+
 int main() {
   const struct { const char *name; void (*run)(); } tests[] = {
     {"DC removal and silence", dcAndSilence}, {"FFT sinusoid", fftTone},
@@ -310,6 +368,14 @@ int main() {
     {"weak third interruption", weakThirdAfterPair},
     {"comparable third cancels", comparableThirdCancels},
     {"clap onset inside weak tone", clapInsideWeakTone},
+    {"measured uneven-spectrum pair", measuredUnevenSpectrumPair},
+    {"spread first and strict second", spreadFirstStrictSecond},
+    {"spread pair requires strict evidence", spreadPairNeedsStrictEvidence},
+    {"weak spread rejection", weakSpreadCannotSupportPair},
+    {"narrow spread rejection", narrowSpreadCannotSupportPair},
+    {"restart discards strict spectral evidence", restartCannotCarryStrictEvidence},
+    {"spread must clear ambient noise", spreadMustClearAmbientNoise},
+    {"expired sequence discards strict evidence", expiredSequenceCannotCarryStrictEvidence},
   };
   unsigned failed = 0;
   for (const auto &test : tests) {

@@ -229,10 +229,11 @@ static void processAudio(bool ready) {
             || result.decision == AudioClapDetector::Decision::Restarted) ++acceptedAudioClaps;
         else if (result.decision != AudioClapDetector::Decision::Calibrated) ++rejectedAudioSounds;
         const auto &f = audioDetector.lastCandidate();
-        Serial.printf("Audio %s: rms=%.1f noise=%.1f high=%.2f flat=%.2f tone=%.2f bins=%u crest=%.2f clip=%.2f start=%lu duration=%lu attack=%.1f pending=%u\n",
+        Serial.printf("Audio %s: rms=%.1f noise=%.1f high=%.2f flat=%.2f tone=%.2f bins=%u crest=%.2f strict=%s clip=%.2f start=%lu duration=%lu attack=%.1f pending=%u\n",
                       AudioClapDetector::name(result.decision), f.rms, audioDetector.noiseRms(),
                       f.highRatio, f.flatness, f.concentration, f.occupiedBins,
-                      f.peak / std::fmax(f.rms, 1e-6f), f.clippedFraction,
+                      f.peak / std::fmax(f.rms, 1e-6f),
+                      audioDetector.candidateHasStrictSpectrum() ? "yes" : "no", f.clippedFraction,
                       static_cast<unsigned long>(audioDetector.candidateStartMs()),
                       static_cast<unsigned long>(audioDetector.candidateDurationMs()), audioDetector.candidateAttack(),
                       audioDetector.pendingClaps());

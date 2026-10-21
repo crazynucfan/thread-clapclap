@@ -7,7 +7,7 @@ click over Thread. The firmware also enables Thread
 router eligibility to let the device help relay mesh traffic.
 
 **Status:** the analog FFT firmware compiles with Arduino ESP32 **3.3.12**,
-and all **37 host tests** pass. The earlier digital version was flashed,
+and all **45 host tests** pass. The earlier digital version was flashed,
 commissioned into Home Assistant, and automatically became a Thread router.
 The analog version has also delivered a real double-clap event through
 Home Assistant to the lamp group. Recognition is still being tuned; real-room
@@ -195,9 +195,15 @@ classifier:
 4. The **loudest frame** must have enough high-frequency content and a spread
    of FFT energy. Spectral flatness and concentration reject narrowband tones;
    crest factor rejects a smooth sine wave and isolated electrical spikes.
+   A strong burst with at least 20 significant bins can support a pair despite
+   low flatness, provided its RMS is at least 150 counts and 12 times ambient
+   noise and its concentration is at most 0.40. Timing, high-band content,
+   crest, and clipping checks still apply.
 5. Clipped bursts are rejected because saturation corrupts the spectral tests.
 6. Two accepted bursts must arrive roughly 160-600 ms apart and have reasonably
-   similar strength and spectral balance. A third comparable burst cancels the pair.
+   similar strength and spectral balance. At least one must pass the strict
+   flatness check; two low-flatness bursts cannot trigger on their own. Either
+   burst can supply the strict evidence. A third comparable burst cancels the pair.
 
 The event still waits for the 600 ms window after the second onset to close,
 and Home Assistant still sees **one button click**, so the same automation
@@ -224,13 +230,17 @@ raw ADC bias/range, clipping fraction, counters, DMA overflows, and the maximum
 processing time for a 128-sample batch. Each completed candidate prints its
 classification, for example `accepted`, `rejected_spectrum`,
 `rejected_slow_attack`, `rejected_clipping`, `rejected_duration`, or
-`restarted_stronger_or_different`, or `ignored_weaker`. Thread status also
+`restarted_stronger_or_different`, `ignored_weaker`, or `rejected_pair_spectrum`.
+The last means two candidate bursts lacked strict spectral evidence. Thread status also
 reports neighbour signal/link quality and MAC acknowledgement/retry counters;
 a connected router status alone does not prove timely Matter delivery.
 
 The `high`, `flat`, and `tone` fields are ratios, not calibrated sound levels.
 `bins` counts in-band FFT bins holding at least 1/128 of total band power;
-`crest` is peak divided by RMS. Both help explain spectral rejections.
+`crest` is peak divided by RMS. `strict=yes` means the loudest frame passed
+all strict spectral/crest checks; `accepted` marks an individual candidate,
+not a complete gesture. Both `strict=no` candidates can be accepted without
+producing a click. These fields help explain spectral rejections.
 `raw` and `range` are ADC counts, not millivolts. `max_batch_us` includes
 classification/logging time and task preemption; it is a diagnostic, not a
 hard real-time deadline guarantee. Repeated DMA overflows mean the stream is
@@ -257,7 +267,11 @@ fields through `audioDetector` in `Config.h`, then rebuild and flash:
 | `attackRatio` | 2.2 | Required abrupt rise |
 | `minHighRatio` | 0.15 | Minimum 1.5-7.5 kHz share of 250 Hz-7.5 kHz energy |
 | `maxConcentration` | 0.55 | Maximum energy share in three neighbouring bins |
-| `minFlatness` | 0.08 | Minimum spectral flatness |
+| `minFlatness` | 0.08 | Strict spectral flatness; at least one clap per pair must pass |
+| `minSpreadBins` | 20 | Significant bins required to support a low-flatness burst |
+| `minSpreadRms` | 150 counts | Absolute RMS floor for low-flatness support |
+| `spreadNoiseMultiplier` | 12 | Ambient-noise margin for low-flatness support |
+| `maxSpreadConcentration` | 0.40 | Concentration limit for low-flatness support |
 | `minCrest` / `maxCrest` | 1.7 / 12 | Peak-to-RMS bounds |
 | `maxClippedFraction` | 0.05 | Maximum near-rail sample fraction |
 | `peakReleaseRatio` | 0.25 | Release after RMS falls below 25% of the peak |
@@ -294,7 +308,7 @@ your existing Border Router to connect Thread to the Home Assistant LAN.
 python3 tools/project.py test
 ```
 
-The **37 host tests** include the original 14 digital tests plus 23 analog
+The **45 host tests** include the original 14 digital tests plus 31 analog
 analysis/classification tests. Analog fixtures cover DC removal, a sinusoid's
 FFT/RMS, broadband noise, valid pairs across window alignments, ignored singles
 and triples, tonal and low-frequency pairs, sustained noise and recovery,
@@ -302,7 +316,10 @@ slow attacks, clipping, electrical spikes, mismatched pairs, echoes, resets,
 and `millis()` rollover. They also cover reverberant clap tails and a feature
 fixture based on the first physical clap test, exclusion of release-quiet
 time from burst duration, and feature timelines with weak precursors, tonal
-interruptions, strong onsets inside background sound, and a third burst. These tests are not a recorded
+interruptions, strong onsets inside background sound, and a third burst.
+A later labelled pair supplies a regression for uneven spectral flatness;
+additional cases require a strict anchor, reject weak/narrow/low-SNR support,
+and prevent reuse of strict evidence after a sequence restart or timeout. These tests are not a recorded
 real-room accuracy benchmark.
 
 Analog mode uses ADC DMA with bounded processing batches. The main loop

@@ -148,5 +148,30 @@ Do not include Thread credentials or device storage.
   FFT-bin count to candidate logs without relaxing spectral thresholds. Tone
   and broadband FFT fixtures also check those bin counts. This build was
   flashed with commissioning retained; the board reattached as a router and
-  continued sampling without DMA overflows. A labelled physical pair is still
+  continued sampling without DMA overflows. At that stage, a labelled physical pair was still
   needed to determine the next spectral-classifier adjustment.
+
+### 2026-10-21: labelled spectral-flatness miss
+
+- A requested physical double clap produced two strong candidates 296ms apart.
+  The first measured RMS 482.8, high-band ratio 0.21, flatness 0.16,
+  concentration 0.29, 26 significant bins, and crest factor 3.04. The second
+  measured RMS 425.3, high-band ratio 0.16, flatness 0.03, concentration 0.36,
+  23 significant bins, and crest factor 3.83. Both had zero near-rail clipping.
+- The first candidate passed; the second failed only the 0.08 flatness gate.
+  No Matter click was emitted and no new Home Assistant event appeared.
+- The classifier now admits a strong low-flatness supporting candidate when
+  it occupies at least 20 significant bins, exceeds both 150 RMS counts and
+  12 times ambient noise, and has concentration at most 0.40. The other
+  high-band, crest, clipping, attack, duration, and pair-consistency checks
+  still apply. At least one burst in the pair must pass the strict spectral
+  check, in either order; two supporting candidates alone cannot trigger.
+- Eight new feature-timeline tests cover the measured pair in both orders,
+  rejection without a strict anchor, weak/narrow/low-SNR support, and clearing
+  strict evidence after a restart or timeout. All 45 host tests and the analog
+  undefined-behaviour sanitizer check pass. These fixtures reconstruct feature
+  bounds; they are not raw audio recordings or measured real-room accuracy.
+- The firmware compiles with Arduino ESP32 3.3.12: 2,684,664 bytes of flash and
+  143,644 bytes of static RAM. Upload succeeded, commissioning was retained,
+  the board reattached as a router, and audio DMA overflows remained zero.
+  End-to-end physical retesting is pending.

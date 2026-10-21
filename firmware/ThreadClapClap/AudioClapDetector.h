@@ -12,6 +12,12 @@ class AudioClapDetector {
     float minHighRatio = 0.15f;
     float maxConcentration = 0.55f;
     float minFlatness = 0.08f;
+    // A strong, spread spectrum may support a pair even with spectral holes.
+    // At least one burst in the pair must still pass minFlatness.
+    uint16_t minSpreadBins = 20;
+    float minSpreadRms = 150;
+    float spreadNoiseMultiplier = 12;
+    float maxSpreadConcentration = 0.40f;
     float minCrest = 1.7f;
     float maxCrest = 12;
     float maxClippedFraction = 0.05f;
@@ -24,7 +30,7 @@ class AudioClapDetector {
     float maxPairHighDifference = 0.35f;
   };
 
-  enum class Decision { None, Calibrated, Accepted, Restarted, IgnoredWeaker, SlowAttack, Spectrum, Clipping, Duration };
+  enum class Decision { None, Calibrated, Accepted, Restarted, IgnoredWeaker, PairSpectrum, SlowAttack, Spectrum, Clipping, Duration };
   struct Result {
     Decision decision = Decision::None;
     bool doubleClap = false;
@@ -41,6 +47,7 @@ class AudioClapDetector {
     active_ = blocked_ = false;
     count_ = 0;
     haveLastClap_ = false;
+    strictSpectrum_ = sequenceHasStrictSpectrum_ = false;
     peak_ = {};
     attack_ = 0;
     duration_ = 0;
@@ -73,7 +80,7 @@ class AudioClapDetector {
       if (f.rms > std::fmax(config_.minRms * 0.45f, noise_ * 2)) lastLoud_ = now;
       if (now - lastLoud_ >= config_.quietMs) blocked_ = false;
     } else if (!active_) {
-      result.doubleClap = completeSequence(now);
+      result.doubleClap = completeSequence(now, result.decision);
       if (haveLastClap_ && now - lastClap_ < config_.minClapGapMs) {
         // Ignore echo tails during the lockout even when their spectra would
         // be rejected. They must not erase the first clap of a valid pair.
@@ -128,6 +135,7 @@ class AudioClapDetector {
   uint32_t candidateDurationMs() const { return duration_; }
   uint32_t candidateStartMs() const { return onset_; }
   float candidateAttack() const { return attack_; }
+  bool candidateHasStrictSpectrum() const { return strictSpectrum_; }
 
   static const char *name(Decision decision) {
     switch (decision) {
@@ -135,6 +143,7 @@ class AudioClapDetector {
       case Decision::Accepted: return "accepted";
       case Decision::Restarted: return "restarted_stronger_or_different";
       case Decision::IgnoredWeaker: return "ignored_weaker";
+      case Decision::PairSpectrum: return "rejected_pair_spectrum";
       case Decision::SlowAttack: return "rejected_slow_attack";
       case Decision::Spectrum: return "rejected_spectrum";
       case Decision::Clipping: return "rejected_clipping";
@@ -154,7 +163,7 @@ class AudioClapDetector {
     attack_ = f.rms / std::fmax(previousRms_, noise_);
     fastAttack_ = attack_ >= config_.attackRatio;
     duration_ = 0;
-    broadband_ = clipped_ = false;
+    broadband_ = clipped_ = strictSpectrum_ = false;
     peak_ = {};
     observe(f);
   }
@@ -167,8 +176,14 @@ class AudioClapDetector {
       // Judge the loudest frame, not a quiet tail or the switching transient
       // at the end of a tone. Otherwise a tonal burst could look broadband.
       const float crest = f.peak / std::fmax(f.rms, 1e-6f);
-      broadband_ = f.highRatio >= config_.minHighRatio && f.concentration <= config_.maxConcentration
-          && f.flatness >= config_.minFlatness && crest >= config_.minCrest && crest <= config_.maxCrest;
+      const bool shape = f.highRatio >= config_.minHighRatio
+          && f.concentration <= config_.maxConcentration
+          && crest >= config_.minCrest && crest <= config_.maxCrest;
+      strictSpectrum_ = shape && f.flatness >= config_.minFlatness;
+      const bool spread = f.occupiedBins >= config_.minSpreadBins
+          && f.rms >= std::fmax(config_.minSpreadRms, noise_ * config_.spreadNoiseMultiplier)
+          && f.concentration <= config_.maxSpreadConcentration;
+      broadband_ = strictSpectrum_ || (shape && spread);
     }
   }
 
@@ -185,24 +200,28 @@ class AudioClapDetector {
         firstRms_ = peak_.rms;
         firstHigh_ = peak_.highRatio;
         count_ = 1;
+        sequenceHasStrictSpectrum_ = strictSpectrum_;
         lastClap_ = now;
         haveLastClap_ = true;
         return Decision::Restarted;
       }
     }
     if (count_ == 0) {
+      sequenceHasStrictSpectrum_ = false;
       firstRms_ = peak_.rms;
       firstHigh_ = peak_.highRatio;
     }
     lastClap_ = now;
     haveLastClap_ = true;
+    sequenceHasStrictSpectrum_ |= strictSpectrum_;
     if (count_ < 3) ++count_;
     return Decision::Accepted;
   }
 
-  bool completeSequence(uint32_t now) {
+  bool completeSequence(uint32_t now, Decision &decision) {
     if (count_ && now - lastClap_ >= config_.sequenceGapMs) {
-      const bool matched = count_ == 2;
+      const bool matched = count_ == 2 && sequenceHasStrictSpectrum_;
+      if (count_ == 2 && !sequenceHasStrictSpectrum_) decision = Decision::PairSpectrum;
       count_ = 0;
       return matched;
     }
@@ -218,4 +237,5 @@ class AudioClapDetector {
   uint8_t count_ = 0;
   bool calibrated_ = false, active_ = false, blocked_ = false;
   bool fastAttack_ = false, broadband_ = false, clipped_ = false, haveLastClap_ = false;
+  bool strictSpectrum_ = false, sequenceHasStrictSpectrum_ = false;
 };
