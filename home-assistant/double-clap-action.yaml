@@ -1,0 +1,42 @@
+blueprint:
+  name: Thread ClapClap - double clap action
+  description: >-
+    Run an action when Thread ClapClap recognises two claps. The firmware maps
+    a physical double clap to one Matter button click. Filter InitialPress so
+    its accompanying ShortRelease does not run the action a second time.
+  domain: automation
+  input:
+    clap_event:
+      name: ClapClap Matter button event entity
+      description: Select the event entity belonging to the commissioned clapper.
+      selector:
+        entity:
+          filter:
+            - domain: event
+              integration: matter
+    clap_action:
+      name: Action to run
+      selector:
+        action: {}
+
+triggers:
+  - trigger: state
+    entity_id: !input clap_event
+    not_from:
+      - unknown
+      - unavailable
+    not_to:
+      - unknown
+      - unavailable
+
+conditions:
+  - condition: template
+    value_template: >-
+      {{ trigger.from_state is not none
+         and trigger.to_state is not none
+         and trigger.from_state.state != trigger.to_state.state
+         and trigger.to_state.attributes.get('event_type') == 'initial_press' }}
+
+actions: !input clap_action
+mode: single
+max_exceeded: silent

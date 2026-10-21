@@ -1,0 +1,38 @@
+name: Build and test
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  detector:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test detector on the host
+        run: python3 tools/project.py test
+
+  firmware:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: arduino/setup-arduino-cli@v2
+        with:
+          version: 1.5.1
+      - uses: actions/cache@v4
+        with:
+          path: ~/.arduino15
+          key: arduino-esp32-3.3.12-${{ runner.os }}
+      - name: Install pinned ESP32 core
+        run: python3 tools/project.py setup
+      - name: Compile XIAO ESP32-C6 Matter-over-Thread firmware
+        run: python3 tools/project.py build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: thread-clapclap-xiao-esp32c6
+          path: .build/firmware/
+          if-no-files-found: error
