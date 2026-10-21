@@ -76,6 +76,13 @@ after changing the source. Close other serial monitors before uploading.
 The console runs at **115200 baud**. Press RESET after opening it if you missed
 the startup pairing code.
 
+Verbose diagnostics are **off after each reboot**. In the serial monitor,
+send `LOG ON` followed by a newline to see detector decisions, audio counters,
+and Thread status. Send `LOG OFF` to stop them. This skips diagnostic formatting
+as well as transmission; detection, counters, and Matter events continue.
+Startup information and errors may still print. Feature capture works with
+diagnostics off. No computer is needed during normal USB-powered operation.
+
 The script selects `XIAO_ESP32C6`, USB CDC enabled, and **Huge APP (3MB No OTA)**.
 The analog build uses approximately 2.68 MB of flash (85% of that app
 partition). There is no OTA update implementation; updates use USB.
@@ -276,8 +283,8 @@ replay comparison. Original DOUT-only mode remains selectable through
 
 The pinned ESP32-C6 prebuilt SDK has **Full Thread Device (FTD)** support.
 The firmware checks this at compile time, keeps the receiver on, and enables
-router eligibility using the OpenThread API. It logs the actual role and
-eligibility every ten seconds, for example:
+router eligibility using the OpenThread API. With `LOG ON`, it logs the actual
+role and eligibility every ten seconds, for example:
 
 ```text
 Thread: role=child router_eligible=yes config_error=0

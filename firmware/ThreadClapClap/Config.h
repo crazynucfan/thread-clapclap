@@ -9,6 +9,8 @@
 #endif
 
 namespace config {
+// Runtime USB commands LOG ON / LOG OFF toggle diagnostics until the next boot.
+constexpr bool diagnosticsOnBoot = false;
 // Analog FFT filtering is the default. Set false to use the original DOUT mode.
 constexpr bool useAnalogAudio = true;
 constexpr uint8_t audioPin = 0;  // XIAO D0 / GPIO0 <- Waveshare AOUT

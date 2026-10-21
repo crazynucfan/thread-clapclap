@@ -281,3 +281,20 @@ Do not include Thread credentials or device storage.
   the cutoff avoids rejecting this trial solely to fit the earlier typing stress
   negative. Repeated installation-room positives and background tests remain
   necessary before claiming reliable recognition.
+
+### 2026-10-21: quiet operation for installation-room testing
+
+- Verbose detector, periodic audio, Matter, and Thread diagnostics now default
+  to off after reboot. Disabled diagnostics skip formatting as well as USB
+  writes. Recognition, counters, router configuration, and capture remain active.
+- `LOG ON` and `LOG OFF`, each terminated by a newline, toggle diagnostics at
+  runtime. Startup information, errors, and requested capture output remain.
+- All 73 automated checks passed. The pinned ESP32-C6 build compiled and was
+  flashed without erasing commissioning data.
+- Hardware checks observed no periodic diagnostics for 12 seconds before
+  `LOG ON`, then verified audio/Matter/Thread output, retained counters, a
+  commissioned and connected router, and zero DMA overflows. After `LOG OFF`,
+  another 12-second interval contained no periodic diagnostics.
+- A four-second feature capture with diagnostics off delivered all 500 frames
+  with integrity checks passing. This was an unlabelled protocol smoke test,
+  not a recognition accuracy trial. Logging was left off for relocation.

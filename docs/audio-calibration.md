@@ -10,6 +10,12 @@ trials, then test algorithm changes against separate held-out trials.
 Build/flash using `tools/project.py` as described in the README. Close Arduino
 CLI or IDE serial monitors before opening the port with the capture tool.
 
+Normal operation starts with verbose diagnostics off. For interactive debugging,
+open a 115200-baud serial monitor and send `LOG ON` with a newline. `LOG OFF`
+stops diagnostic formatting and output without stopping recognition or counters.
+The setting resets to off on reboot. Startup/error messages remain available,
+and feature captures below work independently of this setting.
+
 ```sh
 python3 -m venv .local/audio-venv
 .local/audio-venv/bin/python -m pip install -r tools/requirements-audio.txt

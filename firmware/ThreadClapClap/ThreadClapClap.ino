@@ -36,6 +36,7 @@ uint32_t rejectedAudioSounds = 0;
 uint32_t maxAnalysisUs = 0;
 uint32_t captureSession = 0, captureRemaining = 0, captureSequence = 0, captureDropped = 0, captureClicks = 0;
 bool capturePending = false;
+bool diagnosticsEnabled = config::diagnosticsOnBoot;
 
 static void abortCapture(const char *reason) {
   if (captureRemaining) Serial.printf("CAPTURE_ABORT %lu %s\n", static_cast<unsigned long>(captureSession), reason);
@@ -58,7 +59,13 @@ static void handleSerialCommands() {
     line[length] = 0;
     unsigned long session = 0, seconds = 0;
     char extra = 0;
-    if (!tooLong && strcmp(line, "CAPTURE_STOP") == 0) {
+    if (!tooLong && strcmp(line, "LOG ON") == 0) {
+      diagnosticsEnabled = true;
+      Serial.println("LOG ON: diagnostics enabled until reboot.");
+    } else if (!tooLong && strcmp(line, "LOG OFF") == 0) {
+      diagnosticsEnabled = false;
+      Serial.println("LOG OFF: diagnostics disabled; detection continues.");
+    } else if (!tooLong && strcmp(line, "CAPTURE_STOP") == 0) {
       abortCapture("stopped");
       audioDetector.reset(analyzer.timeMs());
     } else if (!tooLong && sscanf(line, "CAPTURE %lu %lu %c", &session, &seconds, &extra) == 2
@@ -68,7 +75,7 @@ static void handleSerialCommands() {
       captureRemaining = static_cast<uint32_t>(seconds * 125);
       captureSequence = captureDropped = captureClicks = 0;
       capturePending = true;
-    } else if (length) Serial.println("CAPTURE_ERROR expected CAPTURE <nonzero-id> <4..600 seconds> or CAPTURE_STOP");
+    } else if (length) Serial.println("CAPTURE_ERROR expected LOG ON, LOG OFF, CAPTURE <nonzero-id> <4..600 seconds> or CAPTURE_STOP");
     length = 0; tooLong = false;
   }
 }
@@ -149,6 +156,10 @@ static void updateThreadStatus() {
     }
     routerConfigured = error == OT_ERROR_NONE;
   }
+  if (!diagnosticsEnabled) {
+    esp_openthread_lock_release();
+    return;
+  }
   const otDeviceRole role = otThreadGetDeviceRole(instance);
   const bool eligible = otThreadIsRouterEligible(instance);
   otNeighborInfoIterator iterator = OT_NEIGHBOR_INFO_ITERATOR_INIT;
@@ -176,12 +187,15 @@ static void updateThreadStatus() {
 
 static void reportDoubleClap(bool ready) {
   if (!ready) {
-    Serial.println("Double clap detected; offline, event discarded.");
+    if (diagnosticsEnabled) Serial.println("Double clap detected; offline, event discarded.");
     return;
   }
   static uint32_t clicks = 0;
-  Serial.printf("Double clap -> Matter button click (InitialPress + ShortRelease). click=%lu uptime_ms=%lu\n",
-                static_cast<unsigned long>(++clicks), static_cast<unsigned long>(millis()));
+  ++clicks;
+  if (diagnosticsEnabled) {
+    Serial.printf("Double clap -> Matter button click (InitialPress + ShortRelease). click=%lu uptime_ms=%lu\n",
+                  static_cast<unsigned long>(clicks), static_cast<unsigned long>(millis()));
+  }
   clapSwitch.click();
 }
 
@@ -218,7 +232,7 @@ static void processSound(bool ready) {
   if (detector.update(now, active)) {
     reportDoubleClap(ready);
   }
-  if (detector.acceptedClaps() != before) {
+  if (diagnosticsEnabled && detector.acceptedClaps() != before) {
     Serial.printf("Clap: pending=%u accepted_total=%lu\n", detector.pendingClaps(),
                   static_cast<unsigned long>(detector.acceptedClaps()));
   }
@@ -240,7 +254,7 @@ static void processAudio(bool ready) {
     if (!capturePending) abortCapture("connection_changed");
     audioDetector.reset(analyzer.timeMs());
     lastReady = ready;
-    Serial.println("Connection changed: clear pending audio gesture and recalibrate for 2s.");
+    if (diagnosticsEnabled) Serial.println("Connection changed: clear pending audio gesture and recalibrate for 2s.");
   }
   // At most 32ms of audio per loop; the Thread/Matter tasks keep getting CPU.
   for (unsigned batch = 0; batch < 4; ++batch) {
@@ -278,17 +292,19 @@ static void processAudio(bool ready) {
         if (result.decision == ImpulseClapDetector::Decision::Accepted
             || result.decision == ImpulseClapDetector::Decision::Restarted) ++acceptedAudioClaps;
         else if (result.decision != ImpulseClapDetector::Decision::Calibrated) ++rejectedAudioSounds;
-        const auto &f = audioDetector.lastCandidate();
-        Serial.printf("Audio %s: rms=%.1f noise=%.1f high=%.2f flat=%.2f tone=%.2f bins=%u crest=%.2f score=%.3f spectral=%.3f flux=%.3f front=%.3f clip=%.2f start=%lu duration=%lu rise=%lu attack=%.1f pending=%u\n",
-                      ImpulseClapDetector::name(result.decision), f.rms, audioDetector.noiseRms(),
-                      f.highRatio, f.flatness, f.concentration, f.occupiedBins,
-                      f.peak / std::fmax(f.rms, 1e-6f),
-                      audioDetector.candidateScore(), audioDetector.candidateSpectralScore(),
-                      audioDetector.candidateFlux(), audioDetector.candidateFrontRatio(), f.clippedFraction,
-                      static_cast<unsigned long>(audioDetector.candidateStartMs()),
-                      static_cast<unsigned long>(audioDetector.candidateDurationMs()),
-                      static_cast<unsigned long>(audioDetector.candidateRiseMs()), audioDetector.candidateAttack(),
-                      audioDetector.pendingClaps());
+        if (diagnosticsEnabled) {
+          const auto &f = audioDetector.lastCandidate();
+          Serial.printf("Audio %s: rms=%.1f noise=%.1f high=%.2f flat=%.2f tone=%.2f bins=%u crest=%.2f score=%.3f spectral=%.3f flux=%.3f front=%.3f clip=%.2f start=%lu duration=%lu rise=%lu attack=%.1f pending=%u\n",
+                        ImpulseClapDetector::name(result.decision), f.rms, audioDetector.noiseRms(),
+                        f.highRatio, f.flatness, f.concentration, f.occupiedBins,
+                        f.peak / std::fmax(f.rms, 1e-6f),
+                        audioDetector.candidateScore(), audioDetector.candidateSpectralScore(),
+                        audioDetector.candidateFlux(), audioDetector.candidateFrontRatio(), f.clippedFraction,
+                        static_cast<unsigned long>(audioDetector.candidateStartMs()),
+                        static_cast<unsigned long>(audioDetector.candidateDurationMs()),
+                        static_cast<unsigned long>(audioDetector.candidateRiseMs()), audioDetector.candidateAttack(),
+                        audioDetector.pendingClaps());
+        }
       }
       if (capturing) {
         const auto packet = captureFrame(analyzer.features(), captureSession, captureSequence++, analyzer.timeMs(), millis());
@@ -310,7 +326,7 @@ static void processAudio(bool ready) {
     if (audio.overflows() != lastAudioOverflow) break;
   }
   const uint32_t now = millis();
-  if (!captureRemaining && now - lastAudioStatus >= 2000) {
+  if (diagnosticsEnabled && !captureRemaining && now - lastAudioStatus >= 2000) {
     lastAudioStatus = now;
     const auto &f = analyzer.features();
     Serial.printf("Audio status: frames=%lu rms=%.1f noise=%.1f raw=%.0f range=%u..%u clip=%.2f accepted=%lu rejected=%lu dma_overflows=%lu max_batch_us=%lu\n",
@@ -342,6 +358,8 @@ void setup() {
   pinMode(config::soundPin, INPUT_PULLUP);
   pinMode(config::resetButtonPin, INPUT_PULLUP);
   Serial.printf("\nThread ClapClap: double-clap Matter button, XIAO ESP32-C6 / sound GPIO%u.\n", config::soundPin);
+  Serial.printf("Diagnostics %s. Send LOG ON / LOG OFF with a newline over USB.\n",
+                diagnosticsEnabled ? "on" : "off");
 
   if (!Matter.selectNetwork(MATTER_NETWORK_THREAD)) {
     fatal("FATAL: Matter Thread transport selection failed.");
@@ -395,10 +413,12 @@ void loop() {
   const uint32_t now = millis();
   if (!captureRemaining && now - lastStatus >= 10000) {
     lastStatus = now;
-    Serial.printf("Matter: commissioned=%s connected=%s DOUT=%s overflows=%lu\n",
-                  commissioned ? "yes" : "no", ready ? "yes" : "no",
-                  digitalRead(config::soundPin) == LOW ? "LOW" : "HIGH",
-                  static_cast<unsigned long>(droppedBatches));
+    if (diagnosticsEnabled) {
+      Serial.printf("Matter: commissioned=%s connected=%s DOUT=%s overflows=%lu\n",
+                    commissioned ? "yes" : "no", ready ? "yes" : "no",
+                    digitalRead(config::soundPin) == LOW ? "LOW" : "HIGH",
+                    static_cast<unsigned long>(droppedBatches));
+    }
     updateThreadStatus();
   }
   delay(1);
