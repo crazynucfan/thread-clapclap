@@ -185,3 +185,20 @@ Do not include Thread credentials or device storage.
   pair can test recognition and button delivery, but visible lamp validation
   is pending restoration of the target plugs. No reliability improvement is
   claimed from the feature regression alone.
+
+### 2026-10-21: post-update physical trial still missed
+
+- The operator confirmed that the test lamp plugs had intentionally been
+  powered off. Their unavailability is explained and is separate from clap
+  recognition and Matter button delivery.
+- The subsequent requested physical trial produced no double-clap output in
+  the firmware log and no new button event in Home Assistant. Strong bursts
+  were present, but some failed the remaining high-band, flatness, spread, or
+  concentration checks. Accepted individual candidates did not complete a
+  gesture. Several bursts were logged near the report; their exact assignment
+  to physical attempts was not independently timestamped.
+- The pair-level regression fix therefore has not established reliable
+  physical recognition. Further calibration against labelled real-room
+  positive and negative examples is required; passing synthetic tests is
+  insufficient evidence of detector accuracy. No classifier thresholds were
+  changed during this verification.
