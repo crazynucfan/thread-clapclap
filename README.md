@@ -6,10 +6,12 @@ Matter Generic Switch click over Thread. The firmware also enables Thread
 router eligibility to let the device help relay mesh traffic.
 
 **Status:** firmware compiles with Arduino ESP32 **3.3.12**, all 14 host detector
-tests pass, and USB flashing and startup have been verified on a physical XIAO.
-The board reports its Generic Switch endpoint and router eligibility. Sensor
-tuning, commissioning, event delivery, and mesh routing still need validation.
-This is an MIT-licensed community prototype, not a certified Matter product.
+tests pass, and USB flashing, startup, and Home Assistant commissioning have
+been verified on a physical XIAO. Serial logs confirm Thread attachment as a
+router-eligible child and two recognised double-clap sequences reaching the
+Matter click API. Home Assistant event delivery, sensor tuning, and mesh
+routing still need validation. This is an MIT-licensed community prototype,
+not a certified Matter product.
 
 ## 1. Connect the hardware
 
@@ -134,6 +136,8 @@ Single claps do nothing. Home Assistant sees `initial_press`, followed by
 Use the device's **button pressed** trigger in the automation editor, or import
 [`home-assistant/double-clap-action.yaml`](home-assistant/double-clap-action.yaml)
 as a blueprint using this URL:
+
+[Import the blueprint into Home Assistant](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2Fcrazynucfan%2Fthread-clapclap%2Fblob%2Fmain%2Fhome-assistant%2Fdouble-clap-action.yaml)
 
 ```text
 https://github.com/crazynucfan/thread-clapclap/blob/main/home-assistant/double-clap-action.yaml
