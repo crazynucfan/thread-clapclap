@@ -333,6 +333,13 @@ For an isolated toolchain, the project helper accepts `--cli /path/to/arduino-cl
 `--cli-config /path/to/arduino-cli.yaml`, and `--build-dir /path/to/build` before
 the subcommand. Build products are ignored by Git.
 
+## Credits
+
+Created and maintained by [crazynucfan](https://github.com/crazynucfan), with
+assistance from [OpenAI Codex](https://openai.com/codex/) on firmware, tooling,
+documentation, and testing. Physical hardware tests and room observations were
+provided by crazynucfan.
+
 ## Sources
 
 - [Seeed XIAO ESP32-C6 pinout](https://wiki.seeedstudio.com/xiao_esp32c6_getting_started/)
