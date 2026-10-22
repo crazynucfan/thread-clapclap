@@ -6,6 +6,10 @@ adaptive thresholds, FFT onset flux, and burst-shape scoring to recognise short 
 click over Thread. The firmware also enables Thread
 router eligibility to let the device help relay mesh traffic.
 
+**Proof of concept (POC) only. Use at your own risk.** This project is provided
+as-is under the MIT licence, without warranty or any commitment to maintenance,
+support, or updates. It is experimental and is not a certified Matter product.
+
 **Status:** the current burst-scoring firmware builds with Arduino ESP32
 **3.3.12**. All **73 automated checks** pass: 62 native C++ checks (including
 45 retained legacy checks) and eleven capture/replay checks. Earlier firmware
@@ -14,8 +18,7 @@ physical double-clap events, but subsequent trials frequently missed. A labelled
 one on the same captured frames. A subsequent live pair also delivered a
 button event to Home Assistant. A separate speech/tapping stress trial
 produced one false trigger with each classifier. Installation-room recognition
-and false-trigger rates still need validation. This is
-an MIT-licensed community prototype, not a certified Matter product.
+and false-trigger rates still need validation.
 
 ## 1. Connect the hardware
 
@@ -335,7 +338,7 @@ the subcommand. Build products are ignored by Git.
 
 ## Credits
 
-Created and maintained by [crazynucfan](https://github.com/crazynucfan), with
+Created by [crazynucfan](https://github.com/crazynucfan), with
 assistance from [OpenAI Codex](https://openai.com/codex/) on firmware, tooling,
 documentation, and testing. Physical hardware tests and room observations were
 provided by crazynucfan.
