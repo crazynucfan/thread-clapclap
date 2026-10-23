@@ -72,7 +72,7 @@ def main():
             parser.error(f"Arduino ESP32 {CORE} is required; run tools/project.py setup first")
         if args.command == "build":
             digest = hashlib.sha256()
-            for name in ("ImpulseClapDetector.h", "Config.h"):
+            for name in ("ImpulseClapDetector.h", "Config.h", "WaveCapture.h"):
                 digest.update((SKETCH / name).read_bytes())
             detector_id = int(digest.hexdigest()[:8], 16)
             run(cli + ["compile", "--fqbn", FQBN,

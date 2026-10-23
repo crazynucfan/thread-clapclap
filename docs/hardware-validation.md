@@ -298,3 +298,33 @@ Do not include Thread credentials or device storage.
 - A four-second feature capture with diagnostics off delivered all 500 frames
   with integrity checks passing. This was an unlabelled protocol smoke test,
   not a recognition accuracy trial. Logging was left off for relocation.
+
+### 2026-10-24: private waveform capture and host CNN experiment
+
+- Added explicit USB waveform capture for the proposed event-triggered CNN.
+  It streams the existing 16 kHz / 12-bit ADC samples without loss of sample
+  precision; host preprocessing low-pass resamples them to 8 kHz. Raw capture
+  skips DSP/FFT classification, suppresses Matter clicks and resumes with fresh
+  calibration. It uses nonblocking USB writes and reports drops/ADC overflows.
+- The pinned ESP32-C6 capture firmware compiled: 2,688,968 bytes of app flash
+  and 144,444 bytes of static RAM. No CNN runtime or arena is included in those
+  figures. No upload or physical waveform capture was performed on the
+  workstation; the device will be recorded from a macOS M1 Pro laptop.
+- All 82 default automated checks passed: 64 native C++ and 18 Python checks.
+  New tests cover packet layout/CRC, fragmented input, exact ADC-to-PCM mapping,
+  missing packets, aborted sessions, file-integrity checks, private output
+  guards and proposed host double-clap timing. A simulated USB session exercised
+  the host WAV writer; it is not a physical serial-bandwidth measurement.
+- Optional TensorFlow 2.20.0 / Python 3.12 checks exercised the full host
+  frontend, three-convolution/four-class network, training, INT8 conversion,
+  recording-group split guards, full-record evaluation and C-array compilation
+  using temporary synthetic recordings only. The conversion check produced a
+  9,600-byte INT8 model with Conv2D, Mean, FullyConnected and Softmax operators.
+  This is plumbing validation, not a trained clap-recognition result.
+- Training dependency resolution was checked for Apple Silicon/Python 3.12;
+  execution on that Mac remains untested. Real recordings, annotations and
+  models remain private and no trained model is shipped or activated.
+- On-device frontend parity, overlapping event-window queues, TFLite Micro
+  integration, real tensor-arena/heap use, inference timing, and installation-room
+  recognition/false-activation tests remain outstanding. The device's normal
+  DSP detector remains the default.

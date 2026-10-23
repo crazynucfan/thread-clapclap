@@ -22,6 +22,8 @@
 #include "Config.h"
 #include "AnalogAudio.h"
 #include "AudioCapture.h"
+#include "WaveCapture.h"
+#include <esp_heap_caps.h>
 
 MatterGenericSwitch clapSwitch;
 ClapDetector detector(config::detector);
@@ -37,11 +39,43 @@ uint32_t maxAnalysisUs = 0;
 uint32_t captureSession = 0, captureRemaining = 0, captureSequence = 0, captureDropped = 0, captureClicks = 0;
 bool capturePending = false;
 bool diagnosticsEnabled = config::diagnosticsOnBoot;
+uint32_t waveRemaining = 0, waveSession = 0, waveSequence = 0, waveDropped = 0;
+WaveCaptureFrame wavePacket;
+unsigned waveFill = 0;
 
 static void abortCapture(const char *reason) {
   if (captureRemaining) Serial.printf("CAPTURE_ABORT %lu %s\n", static_cast<unsigned long>(captureSession), reason);
   capturePending = false;
   captureRemaining = 0;
+  if (waveRemaining) {
+    Serial.printf("WAVE_ABORT %lu %s\n", static_cast<unsigned long>(waveSession), reason);
+    analyzer.reset();
+    audioDetector.reset(0);
+  }
+  waveRemaining = 0;
+  waveFill = 0;
+}
+
+static void captureWave(const uint16_t *samples, uint32_t count) {
+  for (uint32_t i = 0; i < count && waveRemaining; ++i) {
+    wavePacket.samples[waveFill++] = samples[i];
+    if (waveFill != 64) continue;
+    if (audio.overflows() != lastAudioOverflow) {
+      abortCapture("dma_overflow");
+      return;
+    }
+    wavePacket.session = waveSession;
+    wavePacket.sequence = waveSequence;
+    wavePacket.firstSample = waveSequence++ * 64;
+    wavePacket.checksum = captureCrc32(&wavePacket, offsetof(WaveCaptureFrame, checksum));
+    if (Serial.availableForWrite() < static_cast<int>(sizeof(wavePacket))
+        || Serial.write(reinterpret_cast<const uint8_t *>(&wavePacket), sizeof(wavePacket)) != sizeof(wavePacket)) ++waveDropped;
+    waveFill = 0;
+    if (--waveRemaining == 0) {
+      Serial.printf("WAVE_END %lu %lu %lu\n", static_cast<unsigned long>(waveSession),
+                    static_cast<unsigned long>(waveSequence), static_cast<unsigned long>(waveDropped));
+    }
+  }
 }
 
 static void handleSerialCommands() {
@@ -65,9 +99,23 @@ static void handleSerialCommands() {
     } else if (!tooLong && strcmp(line, "LOG OFF") == 0) {
       diagnosticsEnabled = false;
       Serial.println("LOG OFF: diagnostics disabled; detection continues.");
-    } else if (!tooLong && strcmp(line, "CAPTURE_STOP") == 0) {
+    } else if (!tooLong && strcmp(line, "MEMORY") == 0) {
+      Serial.printf("Memory: free_8bit=%u largest_8bit=%u minimum_free_8bit=%u\n",
+                    static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_8BIT)),
+                    static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)),
+                    static_cast<unsigned>(heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT)));
+    } else if (!tooLong && (strcmp(line, "CAPTURE_STOP") == 0 || strcmp(line, "WAVE_STOP") == 0)) {
       abortCapture("stopped");
       audioDetector.reset(analyzer.timeMs());
+    } else if (!tooLong && sscanf(line, "WAVE_CAPTURE %lu %lu %c", &session, &seconds, &extra) == 2
+               && session && seconds >= 4 && seconds <= 600 && config::useAnalogAudio) {
+      abortCapture("replaced");
+      waveSession = static_cast<uint32_t>(session);
+      waveRemaining = static_cast<uint32_t>(seconds * 250);
+      waveSequence = waveDropped = waveFill = 0;
+      audioDetector.reset(analyzer.timeMs());
+      Serial.printf("WAVE_BEGIN %lu %lu 16000 %lu\n", static_cast<unsigned long>(waveSession),
+                    static_cast<unsigned long>(waveRemaining), static_cast<unsigned long>(CLAP_DETECTOR_BUILD_ID));
     } else if (!tooLong && sscanf(line, "CAPTURE %lu %lu %c", &session, &seconds, &extra) == 2
                && session && seconds >= 4 && seconds <= 600 && config::useAnalogAudio) {
       abortCapture("replaced");
@@ -75,7 +123,7 @@ static void handleSerialCommands() {
       captureRemaining = static_cast<uint32_t>(seconds * 125);
       captureSequence = captureDropped = captureClicks = 0;
       capturePending = true;
-    } else if (length) Serial.println("CAPTURE_ERROR expected LOG ON, LOG OFF, CAPTURE <nonzero-id> <4..600 seconds> or CAPTURE_STOP");
+    } else if (length) Serial.println("CAPTURE_ERROR expected LOG ON/OFF, MEMORY, CAPTURE/WAVE_CAPTURE <id> <4..600 seconds> or CAPTURE_STOP/WAVE_STOP");
     length = 0; tooLong = false;
   }
 }
@@ -251,7 +299,7 @@ static void processAudio(bool ready) {
     return;
   }
   if (ready != lastReady) {
-    if (!capturePending) abortCapture("connection_changed");
+    if (!capturePending && !waveRemaining) abortCapture("connection_changed");
     audioDetector.reset(analyzer.timeMs());
     lastReady = ready;
     if (diagnosticsEnabled) Serial.println("Connection changed: clear pending audio gesture and recalibrate for 2s.");
@@ -275,6 +323,16 @@ static void processAudio(bool ready) {
       fatal("FATAL: analog sampling failed; check AOUT -> D0 and restart.");
     }
     const uint32_t startedUs = micros();
+    if (waveRemaining) {
+      // Raw collection needs no FFT/classifier work and must never operate
+      // lamps. Resume with fresh filter history and calibration afterward.
+      captureWave(samples, count);
+      if (!waveRemaining) { analyzer.reset(); audioDetector.reset(0); }
+      const uint32_t duration = micros() - startedUs;
+      if (duration > maxAnalysisUs) maxAnalysisUs = duration;
+      if (audio.overflows() != lastAudioOverflow) break;
+      continue;
+    }
     for (uint32_t i = 0; i < count; ++i) {
       if (!analyzer.push(samples[i])) continue;
       ++analyzedFrames;
@@ -326,7 +384,7 @@ static void processAudio(bool ready) {
     if (audio.overflows() != lastAudioOverflow) break;
   }
   const uint32_t now = millis();
-  if (diagnosticsEnabled && !captureRemaining && now - lastAudioStatus >= 2000) {
+  if (diagnosticsEnabled && !captureRemaining && !waveRemaining && now - lastAudioStatus >= 2000) {
     lastAudioStatus = now;
     const auto &f = analyzer.features();
     Serial.printf("Audio status: frames=%lu rms=%.1f noise=%.1f raw=%.0f range=%u..%u clip=%.2f accepted=%lu rejected=%lu dma_overflows=%lu max_batch_us=%lu\n",
@@ -352,6 +410,7 @@ static void handleFactoryReset() {
 }
 
 void setup() {
+  Serial.setTxBufferSize(4096); // native USB waveform bursts; never wait for a reader
   Serial.begin(115200);
   Serial.setTxTimeoutMs(0); // logging must never stall audio when USB isn't read
   delay(500);  // bounded: standalone USB power must work without a serial host
@@ -411,7 +470,7 @@ void loop() {
   else processSound(ready);
   handleFactoryReset();
   const uint32_t now = millis();
-  if (!captureRemaining && now - lastStatus >= 10000) {
+  if (!captureRemaining && !waveRemaining && now - lastStatus >= 10000) {
     lastStatus = now;
     if (diagnosticsEnabled) {
       Serial.printf("Matter: commissioned=%s connected=%s DOUT=%s overflows=%lu\n",

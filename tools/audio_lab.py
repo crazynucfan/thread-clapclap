@@ -89,7 +89,7 @@ def validate_frame(frame, previous=None):
 
 def detector_id():
     digest = hashlib.sha256()
-    for name in ('ImpulseClapDetector.h', 'Config.h'):
+    for name in ('ImpulseClapDetector.h', 'Config.h', 'WaveCapture.h'):
         digest.update((ROOT / 'firmware' / 'ThreadClapClap' / name).read_bytes())
     return int(digest.hexdigest()[:8], 16)
 

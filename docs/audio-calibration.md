@@ -1,5 +1,9 @@
 # Calibrate with labelled feature captures
 
+This guide covers summary-feature capture for the current DSP detector.
+For opt-in private waveform recording on macOS and host CNN training, see
+[the CNN experiment](cnn-experiment.md). The capture formats are separate.
+
 The burst classifier is experimental. A passing synthetic fixture or a single
 successful pair does not establish reliable recognition. Keep the sensor gain
 and placement fixed while gathering a small corpus of positive and negative

@@ -11,14 +11,20 @@ as-is under the MIT licence, without warranty or any commitment to maintenance,
 support, or updates. It is experimental and is not a certified Matter product.
 
 **Status:** the current burst-scoring firmware builds with Arduino ESP32
-**3.3.12**. All **73 automated checks** pass: 62 native C++ checks (including
-45 retained legacy checks) and eleven capture/replay checks. Earlier firmware
+**3.3.12**. All **82 automated checks** pass: 64 native C++ checks (including
+45 retained legacy checks) and eighteen capture/replay checks. Earlier firmware
 was commissioned into Home Assistant, became a Thread router, and delivered
 physical double-clap events, but subsequent trials frequently missed. A labelled physical pair passed the new classifier and was missed by the old
 one on the same captured frames. A subsequent live pair also delivered a
 button event to Home Assistant. A separate speech/tapping stress trial
 produced one false trigger with each classifier. Installation-room recognition
 and false-trigger rates still need validation.
+
+An [event-triggered CNN experiment](docs/cnn-experiment.md) adds opt-in private
+waveform capture and a host training/INT8 export workflow. **The deployed
+detector remains DSP-based; no trained CNN is shipped or enabled.** The guide
+includes macOS Apple Silicon capture instructions and outstanding deployment
+benchmarks. Recordings, labels, reports and model artifacts stay under `.local/`.
 
 ## 1. Connect the hardware
 
@@ -193,7 +199,8 @@ samples AOUT on D0 at 16 kHz using DMA; this does not depend on the timing of
 overlap gives a new FFT every 8 ms, with 62.5 Hz frequency bins. The
 streaming filter and FFT use fixed-point integer arithmetic because the C6
 has no floating-point unit; final diagnostic features are floating point. Samples stay
-in a small RAM buffer; audio is not recorded to storage or transmitted.
+in a small RAM buffer. Normal detection does not record audio to storage or
+transmit it. Explicit USB waveform capture for the CNN experiment is separate.
 
 The default detector now scores the **attack and envelope of a burst**:
 
@@ -306,9 +313,10 @@ your existing Border Router to connect Thread to the Home Assistant LAN.
 python3 tools/project.py test
 ```
 
-The **73 automated checks** retain the original 14 digital and 31 analog
-checks, add 17 burst-classifier/protocol checks, and run eleven Python checks for
-capture integrity and native replay. New signal fixtures exercise coloured
+The **82 automated checks** retain the original 14 digital and 31 analog
+checks, add 17 burst-classifier/protocol and two waveform-protocol checks,
+and run eighteen Python checks for feature/waveform capture integrity,
+native replay, privacy guards, and the proposed host pair rule. Signal fixtures exercise coloured
 claps, FFT alignment, positive onset flux, reverberation, singles/triples,
 echoes, tones, clipping, electrical spikes, slow peaks, sustained backgrounds,
 pair consistency, weak interruptions, recovery, and sample-clock rollover.
