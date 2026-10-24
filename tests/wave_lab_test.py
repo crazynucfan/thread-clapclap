@@ -88,6 +88,20 @@ class WaveTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     cnn.choose_threshold(positive, negative, streams)
 
+    def test_threshold_rejects_false_actions_in_isolated_clap_recording(self):
+        result = cnn.choose_threshold([(0.9, True), (0.95, True)], [(0.1, False)], [[]],
+            [{'truth': [2000, 3500], 'scores': [(2000, .9, True, 1),
+                (2300, .85, True, .1), (3500, .95, True, 1)]}])
+        self.assertGreater(result['threshold'], .85)
+        self.assertEqual(result['stream_clap_recall'], 1)
+        self.assertEqual(result['false_pairs'], 0)
+
+    def test_threshold_prioritises_full_trigger_recall_over_manual_alignment(self):
+        result = cnn.choose_threshold([(0.99, True)], [(0.1, False)], [[]],
+            [{'truth': [2000], 'scores': [(2010, .8, True, 1)]}])
+        self.assertLessEqual(result['threshold'], .8)
+        self.assertEqual(result['stream_clap_recall'], 1)
+
     def test_fragmented_packets_and_text(self):
         decoder = lab.Decoder()
         result = []
@@ -181,6 +195,39 @@ class WaveTests(unittest.TestCase):
         self.assertEqual(cnn.pairs([2000, 2100]), 0)
         self.assertEqual(cnn.pairs([2000, 2600]), 0)
         self.assertEqual(cnn.pairs([2000, 2300, 3500, 3800]), 2)
+
+    def test_association_uses_attack_time_when_early_window_sees_future_clap(self):
+        events = [(2580, .99, True, .1), (2814, .99, True, .01),
+                  (2876, .99, True, .2), (2924, .98, True, .02),
+                  (2976, .95, True, .01)]
+        accepted = cnn.associate(events, .8)
+        self.assertEqual(accepted, [2580, 2876, 2976])
+        self.assertEqual(cnn.pair_groups(accepted), [[2580, 2876]])
+
+    def test_association_does_not_chain_merge_real_claps(self):
+        events = [(2000, .9, True, 1), (2100, .9, True, .1),
+                  (2160, .9, True, 1), (2260, .9, True, .1)]
+        self.assertEqual(cnn.associate(events, .8), [2000, 2160])
+        self.assertEqual(cnn.pairs(cnn.associate(events, .8)), 1)
+
+    def test_association_ignores_rejected_candidates_and_respects_boundary(self):
+        events = [(2000, .1, True, 100), (2040, .9, False, 100),
+                  (2100, .9, True, 1), (2220, .9, True, 2)]
+        self.assertEqual(cnn.associate(events, .8), [2100, 2220])
+
+    def test_temporal_matching_cannot_reuse_one_clap_or_pair(self):
+        result = cnn.match_times([2100], [2000, 2200])
+        self.assertEqual(len(result['matches']), 1)
+        self.assertEqual(len(result['missed_expected']), 1)
+        result = cnn.match_times([[2010, 2350], [3600, 3950]],
+                                 [[2000, 2300], [3500, 3800]])
+        self.assertEqual(len(result['matches']), 1)
+        self.assertEqual(result['unmatched_detected'], [[3600, 3950]])
+
+    def test_temporal_matching_maximises_matches_before_timing_accuracy(self):
+        result = cnn.match_times([2090, 2150], [2000, 2100])
+        self.assertEqual(len(result['matches']), 2)
+        self.assertEqual(cnn.match_times([], [])['matches'], [])
 
 
 if __name__ == '__main__': unittest.main()

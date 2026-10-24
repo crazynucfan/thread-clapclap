@@ -313,11 +313,11 @@ your existing Border Router to connect Thread to the Home Assistant LAN.
 python3 tools/project.py test
 ```
 
-The **88 automated checks** retain the original 14 digital and 31 analog
+The **95 automated checks** retain the original 14 digital and 31 analog
 checks, add 17 burst-classifier/protocol and two waveform-protocol checks,
-and run twenty-four Python checks for feature/waveform capture integrity,
+and run thirty-one Python checks for feature/waveform capture integrity,
 native replay, privacy guards, binary CNN labels, validation threshold selection,
-and the proposed host pair rule. Signal fixtures exercise coloured
+attack timestamp association, one-to-one matching, and the proposed host pair rule. Signal fixtures exercise coloured
 claps, FFT alignment, positive onset flux, reverberation, singles/triples,
 echoes, tones, clipping, electrical spikes, slow peaks, sustained backgrounds,
 pair consistency, weak interruptions, recovery, and sample-clock rollover.

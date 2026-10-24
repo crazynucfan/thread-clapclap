@@ -22,6 +22,12 @@ LEGACY_NEGATIVES = frozenset(('knock', 'click', 'other'))
 RATE = 8000
 WINDOW = 2048
 PRE = 256
+GATE_SPEC = {'highpass_hz': 700, 'filter_order': 2, 'frame_samples': 16,
+             'calibration_ms': 2000, 'minimum_rms': .002, 'noise_multiplier': 2.,
+             'attack_ratio': 1.3, 'cooldown_ms': 32, 'cluster_ms': 120,
+             'timestamp_highpass_hz': 1000, 'timestamp_lookahead_ms': 32}
+MINING_SPEC = dict(GATE_SPEC, highpass_hz=1000, minimum_rms=.003,
+                   noise_multiplier=2.5, attack_ratio=1.5)
 SPEC = {'sample_rate': RATE, 'window_samples': WINDOW, 'pretrigger_samples': PRE,
         'frame_length': 256, 'frame_step': 128, 'fft_length': 256, 'mel_bands': 32,
         'mel_low_hz': 125, 'mel_high_hz': 3800, 'log_floor': 1e-6,
@@ -52,29 +58,42 @@ def audio(path):
     return metadata, resample_poly(np.asarray(pcm, dtype=np.float32) / 32768, 1, 2).astype(np.float32)
 
 
-def transients(samples):
-    """Host reference gate; no continuous CNN inference. Two seconds to learn noise."""
+def transient_candidates(samples, spec=None):
+    """Sensitive event proposals plus attack strengths for timestamp association.
+
+    A rejected sound must not blank the next clap for the pair's 160ms minimum
+    gap. Use a 32ms proposal cooldown and associate accepted windows separately.
+    Both filters run continuously, with zero initial state, after resampling.
+    """
     import numpy as np
-    # Remove microphone DC before measuring 2ms RMS. The deployment frontend
-    # must reproduce this filter and the gate before accuracy can be claimed.
-    from scipy.signal import lfilter
-    signal = lfilter([1, -1], [1, -.995], samples)
-    noise, previous, last = 1e-4, 1e-4, -10 * RATE
+    from scipy.signal import butter, sosfilt
+    spec = GATE_SPEC if spec is None else spec
+    def band_rms(cutoff):
+        signal = sosfilt(butter(2, cutoff, fs=RATE, btype='highpass', output='sos'), samples)
+        return np.sqrt(np.mean(signal[:len(signal)//16*16].reshape(-1, 16)**2, axis=1))
+    rms = band_rms(spec['highpass_hz'])
+    strength = band_rms(spec['timestamp_highpass_hz'])
+    noise, previous, last = 1e-4, 1e-4, -10000
     events = []
-    for start in range(0, len(signal) - 15, 16):
-        rms = float(np.sqrt(np.mean(signal[start:start+16] ** 2)))
-        if start < 2 * RATE:
-            noise += .05 * (rms - noise)
-        elif (rms >= max(.0088, 4 * noise) and rms >= 2.2 * max(previous, noise)
-              and start - last >= int(.160 * RATE)):
+    for index, value in enumerate(rms):
+        now, start = index * 2, index * 16
+        if (now >= 2000 and value >= max(spec['minimum_rms'], spec['noise_multiplier'] * noise)
+                and value >= spec['attack_ratio'] * max(previous, noise)
+                and now - last >= spec['cooldown_ms']):
             if start >= PRE and start - PRE + WINDOW <= len(samples):
-                events.append(start)
-                last = start
-        elif rms < max(.0088, 4 * noise):
-            noise += (.01 if rms > noise else .05) * (rms - noise)
+                events.append((start, float(np.max(strength[index:index+16]))))
+                last = now
+        if now < 2000:
+            noise += .05 * (value - noise)
+        else:
+            noise += (.01 if value > noise else .04) * (min(value, noise * 3) - noise)
         noise = max(noise, 1e-5)
-        previous = rms
+        previous = value
     return events
+
+
+def transients(samples):
+    return [onset for onset, _ in transient_candidates(samples)]
 
 
 def window(samples, onset):
@@ -85,14 +104,24 @@ def window(samples, onset):
     return result - np.mean(result)
 
 
-def spectrogram(windows, tf):
+def spectrogram(windows, tf, mode='rms'):
     # Keep preprocessing outside the CNN so all exported model ops have INT8
     # kernels. MCU log-mel parity remains a separate deployment requirement.
+    import numpy as np
+    windows = np.asarray(windows, dtype=np.float32)
+    if mode == 'preemphasis':
+        windows = np.concatenate([np.zeros_like(windows[:, :1]), windows[:, 1:] - .97 * windows[:, :-1]], axis=1)
+    if mode in ('rms', 'preemphasis'):
+        rms = np.sqrt(np.mean(windows**2, axis=1, keepdims=True))
+        windows = windows * (.1 / np.maximum(rms, 1e-5))
     stft = tf.signal.stft(windows, frame_length=256, frame_step=128, fft_length=256,
                           window_fn=tf.signal.hann_window, pad_end=False)
     mel = tf.signal.linear_to_mel_weight_matrix(32, 129, RATE, 125, 3800)
     power = tf.math.square(tf.abs(stft))
     features = tf.math.log(tf.matmul(power, mel) + 1e-6)
+    if mode == 'contrast':
+        features -= features[:, :1, :]
+        return ((tf.clip_by_value(features, -8., 8.) + 8.) / 16.)[..., tf.newaxis]
     return ((tf.clip_by_value(features, -16., 4.) + 16.) / 20.)[..., tf.newaxis]
 
 
@@ -157,13 +186,84 @@ def dataset(manifest_path):
     return recordings
 
 
-def build_model(tf):
+def training_windows(records, seed):
+    """Augment training recordings only; keep reviewed evaluation windows intact.
+
+    Never auto-label quiet stretches of a positive recording. Hard negatives
+    and background mixes come exclusively from confirmed no-clap train files.
+    """
+    import numpy as np
+    from scipy.signal import butter, sosfilt
+    rng = np.random.default_rng(seed)
+    raw, labels = [], []
+    negatives = [r for r in records if r['split'] == 'train' and r['negative_only']]
+    if not negatives:
+        raise ValueError('Training augmentation needs a verified no-clap training recording')
+    def append(value, label):
+        raw.append(np.asarray(value, dtype=np.float32)); labels.append(label)
+    for record in records:
+        if record['split'] != 'train':
+            continue
+        samples = record['samples']
+        for onset, label in record['events']:
+            append(window(samples, onset), label)
+            for _ in range(8 if label == 0 else 2):
+                jitter = int(rng.integers(-32, 13) if label == 0 else rng.integers(-16, 17)) * 16
+                anchor = onset + jitter
+                if anchor < PRE or anchor - PRE + WINDOW > len(samples):
+                    anchor = onset
+                value = window(samples, anchor) * float(np.exp(rng.uniform(np.log(.35 if label == 0 else .5), np.log(1.7))))
+                if label == 0 and rng.random() < .65:
+                    source = negatives[int(rng.integers(len(negatives)))]['samples']
+                    noise = window(source, int(rng.integers(2 * RATE, len(source) - WINDOW)))
+                    snr = float(rng.uniform(0, 30))
+                    scale = float(np.sqrt(np.mean(value**2))) / (10**(snr/20) * max(float(np.sqrt(np.mean(noise**2))), 1e-5))
+                    value = value + noise * scale
+                append(np.clip(value, -1, 1), label)
+        # Mine the stronger attack proposals rather than multiplying thousands
+        # of near-identical weak-noise windows. Ordinary verified background is
+        # already sampled separately; inference uses the more sensitive gate.
+        proposals = [onset for onset, _ in transient_candidates(samples, MINING_SPEC)]
+        if record['negative_only']:
+            known = np.array([onset for onset, _ in record['events']])
+            for onset in proposals:
+                if len(known) and np.min(np.abs(known - onset)) < 64:
+                    continue
+                append(window(samples, onset), 1)
+        else:
+            for onset, label in record['events']:
+                if label == 0:
+                    nearby = [o for o in proposals if -64*8 <= o-onset <= 24*8]
+                    for candidate in sorted(nearby, key=lambda o: abs(o-onset))[:2]:
+                        if candidate != onset:
+                            append(window(samples, candidate), 0)
+    # Spectral balance, speed and a short delayed reflection model variation
+    # between hands and room positions. Apply to both classes, never just claps.
+    rng = np.random.default_rng(seed + 30)
+    for record in records:
+        if record['split'] != 'train':
+            continue
+        for onset, label in record['events']:
+            for _ in range(12 if label == 0 else 2):
+                value = window(record['samples'], onset)
+                indices = PRE + (np.arange(WINDOW)-PRE) * float(rng.uniform(.8, 1.25))
+                value = np.interp(indices, np.arange(WINDOW), value, left=0, right=0)
+                value = sosfilt(butter(2, float(rng.uniform(650, 3900)), fs=RATE, output='sos'), value)
+                if rng.random() < .5:
+                    delay = int(rng.integers(32, 240))
+                    value[delay:] += float(rng.uniform(.1, .5)) * value[:-delay]
+                append(value, label)
+    return np.stack(raw), np.array(labels)
+
+
+def build_model(tf, architecture='flat'):
+    channels = (12, 24, 32) if architecture == 'wide' else (8, 16, 24)
+    strides = ((1, 2), (2, 2), (2, 2)) if architecture == 'wide' else ((2, 2),) * 3
     return tf.keras.Sequential([
         tf.keras.layers.Input(shape=(15, 32, 1)),
-        tf.keras.layers.Conv2D(8, 3, strides=2, padding='same', activation='relu'),
-        tf.keras.layers.Conv2D(16, 3, strides=2, padding='same', activation='relu'),
-        tf.keras.layers.Conv2D(24, 3, strides=2, padding='same', activation='relu'),
-        tf.keras.layers.GlobalAveragePooling2D(),
+        *[tf.keras.layers.Conv2D(c, 3, strides=s, padding='same', activation='relu')
+          for c, s in zip(channels, strides)],
+        tf.keras.layers.Flatten(),
         tf.keras.layers.Dense(len(CLASSES), activation='softmax')])
 
 
@@ -177,7 +277,11 @@ def tensorflow():
 
 def convert(tf, model, representative):
     import numpy as np
-    converter = tf.lite.TFLiteConverter.from_keras_model(model)
+    # A dynamic Flatten batch dimension introduces SHAPE/PACK/STRIDED_SLICE
+    # operators. Inference processes one candidate at a time on the MCU.
+    fixed_input = tf.keras.Input(batch_shape=(1, 15, 32, 1))
+    fixed_model = tf.keras.Model(fixed_input, model(fixed_input, training=False))
+    converter = tf.lite.TFLiteConverter.from_keras_model(fixed_model)
     converter.optimizations = [tf.lite.Optimize.DEFAULT]
     converter.representative_dataset = lambda: ([x[np.newaxis].astype(np.float32)] for x in representative)
     converter.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS_INT8]
@@ -196,12 +300,13 @@ def interpreter(tf, model):
     inputs, outputs = runtime.get_input_details()[0], runtime.get_output_details()[0]
     if (inputs['dtype'] != np.int8 or outputs['dtype'] != np.int8
             or list(inputs['shape']) != [1, 15, 32, 1]
+            or list(inputs['shape_signature']) != [1, 15, 32, 1]
             or list(outputs['shape']) != [1, len(CLASSES)]):
         raise ValueError('Expected INT8 [1,15,32,1] input and INT8 [1,2] output')
     if any(np.issubdtype(tensor['dtype'], np.floating) for tensor in runtime.get_tensor_details()):
         raise ValueError('Export still contains floating-point tensors')
     operators = {op['op_name'] for op in runtime._get_ops_details()} - {'DELEGATE'}
-    if operators - {'CONV_2D', 'MEAN', 'FULLY_CONNECTED', 'SOFTMAX'}:
+    if operators - {'CONV_2D', 'RESHAPE', 'FULLY_CONNECTED', 'SOFTMAX'}:
         raise ValueError('Unexpected model operators: ' + str(operators))
     return runtime, inputs, outputs, sorted(operators)
 
@@ -217,26 +322,90 @@ def predict(runtime, inputs, outputs, features):
     return (runtime.get_tensor(outputs['index'])[0].astype(np.float32) - zero) * scale
 
 
-def pairs(onsets):
-    """Proposed pair rule for host evaluation; timestamps are sound onsets."""
-    total = count = 0
+def pair_groups(onsets):
+    """Exactly two counted attacks, 160–599ms apart; a third cancels."""
+    result, pending = [], []
     last = None
     for now in onsets:
         if last is not None and now - last >= 600:
-            total += count == 2
-            count = 0
+            if len(pending) == 2:
+                result.append(pending)
+            pending = []
         if last is None or now - last >= 160:
-            count = min(3, count + 1)
+            if len(pending) < 3:
+                pending.append(now)
             last = now
-    return total + (count == 2)
+    if len(pending) == 2:
+        result.append(pending)
+    return result
 
 
-def choose_threshold(positive_scores, negative_scores, negative_streams):
+def pairs(onsets):
+    return len(pair_groups(onsets))
+
+
+def associate(events, threshold, cluster_ms=120):
+    """Merge overlapping accepted windows around one attack.
+
+    Events are (onset_ms, score, clap_is_top_class, attack_strength). Anchor
+    each cluster at its first candidate, rather than extending it indefinitely.
+    The strongest next-32ms high-band attack supplies the timestamp; score
+    breaks ties. An early window can see a future clap and score just as highly
+    as the actual attack, so score alone is an unreliable timestamp selector.
+    """
+    selected, anchor, best = [], None, None
+    for event in events:
+        onset, score, top = event[:3]
+        strength = event[3] if len(event) > 3 else score
+        candidate = (onset, score, strength)
+        if not top or score < threshold:
+            continue
+        if anchor is None or onset - anchor >= cluster_ms:
+            if best is not None:
+                selected.append(best[0])
+            anchor, best = onset, candidate
+        elif (strength, score) > (best[2], best[1]):
+            best = candidate
+    if best is not None:
+        selected.append(best[0])
+    return selected
+
+
+def match_times(detected, expected, tolerance_ms=100):
+    """One-to-one, order-preserving timestamp matching (single claps or pairs).
+
+    Maximise matched events, then minimise timing error. A prediction cannot
+    explain two annotated events. Pair matches must satisfy both timestamps.
+    """
+    def vector(item):
+        return item if isinstance(item, (list, tuple)) else (item,)
+    previous = [(0, 0., ()) for _ in range(len(expected) + 1)]
+    for i, observed in enumerate(detected):
+        current = [(0, 0., ())]
+        for j, truth in enumerate(expected):
+            choices = [previous[j+1], current[j]]
+            a, b = vector(observed), vector(truth)
+            errors = [abs(x-y) for x, y in zip(a, b)]
+            if len(a) == len(b) and all(error <= tolerance_ms for error in errors):
+                count, cost, matches = previous[j]
+                choices.append((count+1, cost+sum(errors), matches+((i, j),)))
+            current.append(max(choices, key=lambda value: (value[0], -value[1])))
+        previous = current
+    matches = previous[-1][2]
+    used_d, used_e = {i for i, _ in matches}, {j for _, j in matches}
+    return {'matches': [{'detected': detected[i], 'expected': expected[j]} for i, j in matches],
+            'unmatched_detected': [item for i, item in enumerate(detected) if i not in used_d],
+            'missed_expected': [item for j, item in enumerate(expected) if j not in used_e]}
+
+
+def choose_threshold(positive_scores, negative_scores, negative_streams, positive_streams=()):
     """Select a validation operating point for the complete double-clap action.
 
     Window scores are (clap_score, top_class_is_clap). Each separate negative
-    recording supplies (onset_ms, clap_score, top_class_is_clap) events. Do not
-    join streams: events in different recordings cannot form a pair.
+    recording supplies candidate tuples consumed by associate(). Positive
+    streams also supply reviewed clap times under 'truth'. Check their false
+    actions too: an isolated-clap recording must not activate the switch.
+    Never join streams across recordings.
     """
     if not positive_scores or not negative_scores or not negative_streams:
         raise ValueError('Threshold selection needs positive and negative validation windows '
@@ -244,15 +413,22 @@ def choose_threshold(positive_scores, negative_scores, negative_streams):
     choices = []
     for step in range(128, 257):
         threshold = step / 256
-        accepted = [[onset for onset, score, top in stream if top and score >= threshold]
-                    for stream in negative_streams]
+        accepted = [associate(stream, threshold) for stream in negative_streams]
         false_pairs = sum(pairs(onsets) for onsets in accepted)
+        stream_matches, stream_total = 0, 0
+        for stream in positive_streams:
+            detected = associate(stream['scores'], threshold)
+            truth = stream['truth']
+            stream_matches += len(match_times(detected, truth)['matches'])
+            stream_total += len(truth)
+            false_pairs += len(match_times(pair_groups(detected), pair_groups(truth))['unmatched_detected'])
         if false_pairs:
             continue
         choices.append({
             'threshold': threshold,
             'clap_recall': sum(top and score >= threshold for score, top in positive_scores)
                 / len(positive_scores),
+            'stream_clap_recall': stream_matches / stream_total if stream_total else None,
             'false_clap_windows': sum(top and score >= threshold for score, top in negative_scores),
             'false_trigger_claps': sum(map(len, accepted)),
             'false_pairs': false_pairs,
@@ -262,18 +438,56 @@ def choose_threshold(positive_scores, negative_scores, negative_streams):
     # Maximise clap recall with zero observed validation false pairs. Among
     # equal-recall choices prefer fewer isolated false claps, then a higher
     # cutoff. Report those isolated errors: zero false pairs is not zero errors.
-    return max(choices, key=lambda item: (item['clap_recall'], -item['false_clap_windows'],
+    return max(choices, key=lambda item: (item['stream_clap_recall']
+                                        if item['stream_clap_recall'] is not None else item['clap_recall'],
+                                        item['clap_recall'], -item['false_clap_windows'],
                                         -item['false_trigger_claps'], item['threshold']))
+
+
+def score_stream(record, tf, runtime, inputs, outputs, frontend):
+    import numpy as np
+    proposals = transient_candidates(record['samples'])
+    if not proposals:
+        return []
+    raw = np.stack([window(record['samples'], onset) for onset, _ in proposals])
+    features = spectrogram(raw, tf, frontend).numpy()
+    result = []
+    for (onset, strength), feature in zip(proposals, features):
+        scores = predict(runtime, inputs, outputs, feature)
+        result.append((onset * 1000 / RATE, float(scores[0]), bool(np.argmax(scores) == 0), strength))
+    return result
+
+
+def replay(record, scores, threshold):
+    accepted = associate(scores, threshold)
+    detected = pair_groups(accepted)
+    truth = [onset * 1000 / RATE for onset, label in sorted(record['events']) if label == 0]
+    expected = pair_groups(truth)
+    return {'recording': str(record['path']), 'split': record['split'],
+            'negative_only': record['negative_only'], 'duration_s': record['duration_s'],
+            'usable_negative_seconds': max(0, record['duration_s'] - 2 - (WINDOW-PRE)/RATE)
+                if record['negative_only'] else 0,
+            'candidate_count': len(scores), 'accepted_claps': accepted,
+            'recognized_pairs': len(detected), 'expected_pairs_from_annotations': len(expected),
+            'pair_matching': match_times(detected, expected),
+            'clap_matching': match_times(accepted, truth),
+            'annotation_review': record['annotation_review']}
 
 
 def train(args):
     import numpy as np
+    import scipy
+    from scipy.signal import butter
+    started = time.monotonic()
+    trainer_sha256 = wave_lab.digest(Path(__file__))
     destination = wave_lab.private_path(args.output)
-    if destination.exists(): raise ValueError('Output directory already exists; choose a new experiment name')
+    if destination.exists():
+        raise ValueError('Output directory already exists; choose a new experiment name')
     tf = tensorflow()
     tf.keras.utils.set_random_seed(args.seed)
     records = dataset(args.manifest)
-    arrays = {}
+    frontend, architecture = getattr(args, 'frontend', 'rms'), getattr(args, 'architecture', 'flat')
+    arrays, reviewed_counts = {}, {}
     for split in ('train', 'validation', 'test'):
         examples = [(record, onset, label) for record in records if record['split'] == split
                     for onset, label in record['events']]
@@ -281,102 +495,126 @@ def train(args):
         minimum = 20 if split == 'train' else 5
         if any(counts[label] < minimum for label in range(len(CLASSES))):
             raise ValueError(f'{split} needs at least {minimum} reviewed windows of each class; got {dict(counts)}')
-        raw = np.stack([window(record['samples'], onset) for record, onset, _ in examples])
-        arrays[split] = (spectrogram(raw, tf).numpy(), np.array([label for _, _, label in examples]))
-    # Test labels and features do not select weights, stopping point or threshold.
-    model = build_model(tf)
+        reviewed_counts[split] = {CLASSES[label]: counts[label] for label in range(len(CLASSES))}
+        if split == 'train':
+            raw, labels = training_windows(records, args.seed)
+        else:
+            raw = np.stack([window(record['samples'], onset) for record, onset, _ in examples])
+            labels = np.array([label for _, _, label in examples])
+        arrays[split] = (spectrogram(raw, tf, frontend).numpy(), labels)
+    # Test recordings cannot select weights, early stopping or the operating cutoff.
+    model = build_model(tf, architecture)
     model.compile(optimizer=tf.keras.optimizers.Adam(.001), loss='sparse_categorical_crossentropy', metrics=['accuracy'])
-    x, y = arrays['train']
-    weights = {int(label): len(y) / (len(CLASSES) * count) for label, count in Counter(y).items()}
-    # Use bounded tf.data threading on laptops and CI workers.
     options = tf.data.Options(); options.threading.private_threadpool_size = 1
     def batches(split, shuffle=False):
         features, labels = arrays[split]
-        data = tf.data.Dataset.from_tensor_slices((features, labels))
-        if shuffle: data = data.shuffle(len(labels), seed=args.seed)
-        return data.batch(16).with_options(options)
-    # Class weighting is applied via explicit training weights in the dataset.
-    training = tf.data.Dataset.from_tensor_slices((x, y, np.array([weights[int(v)] for v in y], dtype=np.float32)))
-    training = training.shuffle(len(y), seed=args.seed).batch(16).with_options(options)
-    model.fit(training, validation_data=batches('validation'), epochs=args.epochs,
-              callbacks=[tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=8, restore_best_weights=True)], verbose=2)
-    representative = np.concatenate([x[y == label][:50] for label in range(len(CLASSES))])
+        weights = {int(label): len(labels)/(len(CLASSES)*count) for label, count in Counter(labels).items()}
+        data = tf.data.Dataset.from_tensor_slices((features, labels,
+            np.array([weights[int(label)] for label in labels], dtype=np.float32)))
+        if shuffle:
+            data = data.shuffle(len(labels), seed=args.seed)
+        return data.batch(32).with_options(options)
+    history = model.fit(batches('train', True), validation_data=batches('validation'), epochs=args.epochs,
+        callbacks=[tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True)], verbose=2)
+    x, y = arrays['train']
+    representative = np.concatenate([x[np.flatnonzero(y == label)[
+        np.linspace(0, np.sum(y == label)-1, min(100, np.sum(y == label))).astype(int)]]
+        for label in range(len(CLASSES))])
     converted = convert(tf, model, representative)
     runtime, inputs, outputs, operators = interpreter(tf, converted)
     validation_scores = np.stack([predict(runtime, inputs, outputs, f) for f in arrays['validation'][0]])
-    positive_scores, negative_scores, negative_streams = [], [], []
+    positive_scores, negative_scores, negative_streams, positive_streams = [], [], [], []
+    streams = {}
     for scores, label in zip(validation_scores, arrays['validation'][1]):
         item = (float(scores[0]), bool(np.argmax(scores) == 0))
         (positive_scores if label == 0 else negative_scores).append(item)
-    validation_negative_seconds = 0
     for record in records:
-        if record['split'] != 'validation' or not record['negative_only']:
+        if record['split'] != 'validation':
             continue
-        stream = []
-        for onset in transients(record['samples']):
-            features = spectrogram(window(record['samples'], onset)[np.newaxis], tf).numpy()[0]
-            scores = predict(runtime, inputs, outputs, features)
-            stream.append((onset * 1000 / RATE, float(scores[0]), bool(np.argmax(scores) == 0)))
-        negative_streams.append(stream)
-        validation_negative_seconds += max(0, record['duration_s'] - 2 - (WINDOW-PRE) / RATE)
-    # All operating-point decisions use validation data and finish before any
-    # test predictions. The full trigger/classifier/pair path determines false
-    # actions; a single isolated false clap need not disable valid pairs.
-    operating_point = choose_threshold(positive_scores, negative_scores, negative_streams)
+        stream = score_stream(record, tf, runtime, inputs, outputs, frontend)
+        streams[str(record['path'])] = stream
+        if record['negative_only']:
+            negative_streams.append(stream)
+        else:
+            positive_streams.append({'scores': stream,
+                'truth': [onset*1000/RATE for onset, label in sorted(record['events']) if label == 0]})
+    operating_point = choose_threshold(positive_scores, negative_scores, negative_streams, positive_streams)
     threshold = operating_point['threshold']
+    normalization = {
+        'rms': 'window DC removal; scale waveform to RMS 0.1 with denominator floor 1e-5; log mel clipped [-16,4], scaled (log+16)/20',
+        'preemphasis': 'window DC removal; first sample zero, x[n]-.97*x[n-1]; RMS 0.1 floor 1e-5; log mel [-16,4] scaled (log+16)/20',
+        'contrast': 'window DC removal; log mel minus first log-mel frame per band; clip [-8,8], scale (contrast+8)/16',
+    }
+    spec = dict(SPEC, mode=frontend, normalisation=normalization[frontend])
+    protocol = {'schema': 2, 'seed': args.seed, 'test_role': getattr(args, 'test_role', 'held_out'),
+                'frontend': spec, 'gate': GATE_SPEC, 'mining_gate': MINING_SPEC,
+                'filter_sos_coefficients': {str(hz): butter(2, hz, fs=RATE, btype='highpass', output='sos').tolist()
+                    for hz in (700, 1000)}, 'architecture': architecture,
+                'parameters': model.count_params(), 'threshold': threshold,
+                'validation_operating_point': operating_point, 'model_sha256': hashlib.sha256(converted).hexdigest(),
+                'manifest_sha256': wave_lab.digest(args.manifest), 'trainer_sha256': trainer_sha256,
+                'recordings': [{'sha256': r['sha256'], 'split': r['split'], 'group': r['group'],
+                    'events_sha256': hashlib.sha256(json.dumps(sorted(r['events'])).encode()).hexdigest()}
+                    for r in records]}
+    destination.mkdir(parents=True)
+    # Persist the complete operating point before the first test prediction.
+    write_json(destination / 'selection-frozen.json', protocol)
+    (destination / 'clap.tflite').write_bytes(converted)
+    model.save(destination / 'float.keras')
+    write_json(destination / 'history.json', history.history)
     def recall(scores, labels):
-        positive = labels == 0
         accepted = (np.argmax(scores, axis=1) == 0) & (scores[:, 0] >= threshold)
-        return float(np.mean(accepted[positive]))
+        return float(np.mean(accepted[labels == 0]))
     confusion = np.zeros((len(CLASSES), len(CLASSES)), dtype=int)
     test_scores = []
     for features, label in zip(*arrays['test']):
         scores = predict(runtime, inputs, outputs, features)
         test_scores.append(scores)
         confusion[int(label), int(np.argmax(scores))] += 1
-    false_pairs = 0
-    negative_seconds = 0
-    positive_trials = []
+    replay_rows = []
     for record in records:
-        if record['split'] != 'test': continue
-        proposed = transients(record['samples'])
-        recognized = []
-        for onset in proposed:
-            features = spectrogram(window(record['samples'], onset)[np.newaxis], tf).numpy()[0]
-            score = predict(runtime, inputs, outputs, features)
-            if int(np.argmax(score)) == 0 and score[0] >= threshold:
-                recognized.append(onset * 1000 / RATE)
-        count = pairs(recognized)
-        if record['negative_only']:
-            false_pairs += count
-            negative_seconds += max(0, record['duration_s'] - 2 - (WINDOW-PRE) / RATE)
-        else:
-            expected = pairs([onset * 1000 / RATE for onset, label in sorted(record['events']) if label == 0])
-            positive_trials.append({'recording': str(record['path']), 'expected_pairs_from_annotations': expected,
-                                    'recognized_pairs': count,
-                                    'annotation_review': record['annotation_review']})
-    report = {'schema': 1, 'classes': CLASSES, 'frontend': SPEC, 'threshold': threshold,
-              'test_role': getattr(args, 'test_role', 'held_out'),
-              'threshold_policy': 'maximise validation clap recall with zero observed full-record '
-                  'validation false pairs; break ties by isolated errors and higher cutoff',
-              'validation_operating_point': operating_point,
-              'validation_negative_seconds': validation_negative_seconds,
-              'validation_clap_recall_at_threshold': recall(validation_scores, arrays['validation'][1]),
-              'test_clap_recall_at_threshold': recall(np.stack(test_scores), arrays['test'][1]),
-              'model_bytes': len(converted), 'operators': operators, 'test_confusion_rows_actual': confusion.tolist(),
-              'test_positive_trials': positive_trials, 'test_negative_seconds': negative_seconds,
-              'test_false_activations': false_pairs,
-              'test_false_activations_per_hour': false_pairs * 3600 / negative_seconds if negative_seconds else None,
-              'zero_event_95pct_upper_per_hour': -math.log(.05) * 3600 / negative_seconds
-                  if negative_seconds and not false_pairs else None,
-              'tensor_arena_bytes': None, 'esp32c6_inference_us': None,
-              'runtime_status': 'Host reference only; MCU frontend, queueing, pair-rule parity and resource benchmarks remain required.',
-              'model_sha256': hashlib.sha256(converted).hexdigest(),
-              'training_environment': {'tensorflow': tf.__version__, 'python': platform.python_version()}}
-    destination.mkdir(parents=True)
-    (destination / 'clap.tflite').write_bytes(converted)
+        if record['split'] == 'train' and not record['negative_only']:
+            continue
+        key = str(record['path'])
+        if key not in streams:
+            streams[key] = score_stream(record, tf, runtime, inputs, outputs, frontend)
+        row = replay(record, streams[key], threshold)
+        replay_rows.append(row)
+    write_json(destination / 'replay.json', {'protocol': protocol, 'records': replay_rows,
+        'scores': streams, 'timing_tolerance_ms': 100,
+        'training_replay_role': 'diagnostic only; seen by training, not independent evaluation'})
+    test_rows = [r for r in replay_rows if r['split'] == 'test']
+    false_pairs = sum(r['recognized_pairs'] for r in test_rows if r['negative_only'])
+    negative_seconds = sum(r['usable_negative_seconds'] for r in test_rows)
+    report = dict(protocol, classes=CLASSES,
+        threshold_policy='maximise one-to-one full-stream validation clap recall, then annotated recall, with zero unmatched validation pair actions; break ties by isolated errors and higher cutoff',
+        validation_negative_seconds=sum(r['usable_negative_seconds'] for r in replay_rows if r['split'] == 'validation'),
+        validation_clap_recall_at_threshold=recall(validation_scores, arrays['validation'][1]),
+        test_clap_recall_at_threshold=recall(np.stack(test_scores), arrays['test'][1]),
+        reviewed_window_counts=reviewed_counts,
+        augmented_training_counts={CLASSES[label]: int(np.sum(y == label)) for label in range(len(CLASSES))},
+        augmentation={'positive_variants': 8, 'negative_variants': 2, 'noise_snr_db': [0,30],
+            'noise_mix_probability': .65, 'positive_jitter_ms': [-64,24], 'negative_jitter_ms': [-32,32],
+            'gain_positive': [.35,1.7], 'gain_negative': [.5,1.7],
+            'spectral_variants_positive': 12, 'spectral_variants_negative': 2,
+            'lowpass_hz': [650,3900], 'speed': [.8,1.25], 'reflection_delay_samples': [32,239],
+            'sources': 'training only; background mixes and hard negatives from verified no-clap training files'},
+        early_stopping='class-balanced validation loss, patience 10, restore best weights',
+        epochs_run=len(history.history['loss']), model_bytes=len(converted), operators=operators,
+        input_quantization=list(inputs['quantization']), output_quantization=list(outputs['quantization']),
+        test_confusion_rows_actual=confusion.tolist(),
+        test_positive_trials=[r for r in test_rows if not r['negative_only']],
+        test_negative_seconds=negative_seconds, test_false_activations=false_pairs,
+        test_false_activations_per_hour=false_pairs*3600/negative_seconds if negative_seconds else None,
+        zero_event_95pct_upper_per_hour=-math.log(.05)*3600/negative_seconds if negative_seconds and not false_pairs else None,
+        all_negative_replay_seconds=sum(r['usable_negative_seconds'] for r in replay_rows),
+        all_negative_replay_false_actions=sum(r['recognized_pairs'] for r in replay_rows if r['negative_only']),
+        tensor_arena_bytes=None, esp32c6_inference_us=None,
+        runtime_status='Host reference only; MCU frontend, queueing, pair-rule parity and resource benchmarks remain required.',
+        training_environment={'tensorflow': tf.__version__, 'numpy': np.__version__,
+            'scipy': scipy.__version__, 'python': platform.python_version()},
+        total_host_seconds=time.monotonic()-started)
     write_json(destination / 'report.json', report)
-    # C array is private and deliberately not linked into the current firmware.
     rows = [', '.join(f'0x{value:02x}' for value in converted[i:i+16]) for i in range(0, len(converted), 16)]
     (destination / 'ClapModel.local.h').write_text('#pragma once\n#include <cstddef>\n'
         'alignas(16) inline constexpr unsigned char clapModel[] = {\n  ' + ',\n  '.join(rows)
@@ -417,6 +655,8 @@ def main():
     training.add_argument('--output', type=Path, required=True)
     training.add_argument('--epochs', type=int, choices=range(1, 501), default=80)
     training.add_argument('--seed', type=int, default=7)
+    training.add_argument('--frontend', choices=('rms', 'preemphasis', 'contrast'), default='rms')
+    training.add_argument('--architecture', choices=('flat', 'wide'), default='flat')
     training.add_argument('--test-role', choices=('held_out', 'diagnostic'), default='held_out',
                           help='use diagnostic if these test recordings have already informed development')
     commands.add_parser('smoke', help='verify synthetic frontend/CNN/INT8 conversion; no saved model')

@@ -24,17 +24,17 @@ needed to collect data or evaluate a host model.
 | ADC acquisition | Existing 16 kHz, 12-bit AOUT on D0/GPIO0 |
 | CNN sample rate | 8 kHz after low-pass resampling |
 | Event window | 256 ms: 32 ms before onset, 224 ms after |
+| Proposal gate | 700 Hz high-pass, 2 ms RMS, adaptive noise threshold, 32 ms cooldown |
 | Spectrogram | 256-point periodic Hann, 128-sample hop, 32 mel bands, 125–3800 Hz |
-| CNN input | 15 × 32 × 1 log-power mel features, fixed clipping/scaling |
-| Network | Three 3×3 stride-2 convolutions: 8, 16, 24 channels; global average; dense softmax |
+| CNN input | 15 × 32 × 1 log-power mel features; waveform RMS normalized before the log floor |
+| Network | Three 3×3 stride-2 convolutions: 8, 16, 24 channels; flatten; dense softmax; 5,114 parameters |
 | Classes | clap, non-clap (all other sounds) |
 | Export | Full INT8 input, activations, weights and output; INT32 biases |
-| Model flash target | Under 80 KiB; synthetic conversion check produced 9,600 bytes |
+| Model flash target | Under 80 KiB; improved real-audio export is 9,944 bytes |
 | Tensor arena target | Under 150 KiB; **not measured or reserved** |
 | ESP32-C6 inference target | Under 30 ms if feasible; **not benchmarked** |
 
-The synthetic model size verifies conversion plumbing, not recognition
-quality. Normal firmware already uses substantial RAM for Matter/Thread; its
+Model file size does not establish embedded resource usage. Normal firmware already uses substantial RAM for Matter/Thread; its
 linker headroom is not available tensor-arena space. The USB `MEMORY` command
 prints current free, largest contiguous, and minimum free 8-bit heap.
 
@@ -43,6 +43,16 @@ can overlap another clap 160 ms later. Embedded inference must queue overlapping
 windows and preserve onset timestamps while ADC/DMA continues. It must not
 stop sampling while waiting for a window or inference. Pair timeout handling
 also needs to allow an already-detected clap's classification to finish.
+
+The proposal cooldown is deliberately shorter than the pair rule's 160 ms
+minimum: rejecting one transient must not suppress the following clap. Accepted
+windows are grouped within 120 ms of the first candidate, without extending that
+cluster indefinitely. The strongest 1 kHz high-band attack in the following
+32 ms supplies its timestamp; CNN score breaks ties. An early window can see a
+future clap and score as highly as the true attack. Choosing by score alone
+can count that clap twice and cancel a valid pair. The more sensitive gate also
+increases candidate load; MCU queue and worst-case processing measurements are
+still required.
 
 ## First capture on a macOS M1 Pro
 
@@ -150,16 +160,33 @@ guards, not an adequate accuracy study on their own.
 
 ```sh
 .local/cnn-venv/bin/python tools/cnn_lab.py train .local/cnn/manifest.json \
-  --output .local/cnn/experiment-01
+  --output .local/cnn/experiment-01 --epochs 100
 ```
 
-Training selects weights on training recordings, early stopping on validation
-loss, and the operating threshold on validation claps plus complete verified
-no-clap validation recordings. The selector maximises labelled clap recall with
-zero observed validation false double-clap actions over a 0.5–1.0 cutoff grid.
-Equal-recall choices prefer fewer isolated false clap classifications, then a
-higher cutoff. A negative-only validation recording is required; isolated
-negative windows alone cannot measure the pair rule.
+Training adds gain, onset jitter, background mixes at 0–30 dB SNR, spectral
+balance, speed and short reflection variants using training recordings only.
+Background mixing and additional hard negatives use verified no-clap training
+files. Stronger 1 kHz proposals supply the extra training windows; ordinary
+background windows already cover weak noise. Evaluation audio remains untouched.
+The augmented examples are variants of the original reviewed sounds, not new
+independent recordings.
+
+Both training and validation loss balance the two classes. Early stopping
+restores the best validation-loss weights. At export the batch dimension is
+fixed to one, avoiding dynamic shape operators; all tensors remain integer.
+The default waveform frontend scales each DC-removed window to RMS 0.1
+(denominator floor 1e-5) before computing log mel. This prevents quiet claps
+from collapsing against the log floor. Log mel is clipped to [-16,4] and scaled
+to [0,1]. Optional `--frontend preemphasis|contrast` and `--architecture wide`
+support explicit experiments; the successful default uses `rms` and `flat`.
+
+Threshold selection maximises one-to-one full-stream validation clap recall,
+then reviewed-window recall, with zero unmatched double-clap actions over a
+0.5–1.0 cutoff grid. It checks positive validation recordings too, so isolated
+claps must not produce actions. Pair matches require both onsets within 100 ms
+of the annotations. Equal-recall choices prefer fewer isolated false clap
+classifications, then a higher cutoff. A verified negative-only validation
+recording is required; isolated negative windows cannot measure the pair rule.
 
 An isolated high-scoring impact does not automatically raise the cutoff above
 nearly every real clap. The report retains counts of isolated false clap windows
@@ -171,7 +198,11 @@ in a short validation session does not establish a reliable false-trigger rate.
 Quantization calibration
 uses training examples from both classes. Final test predictions do not
 select weights or threshold. The private output includes an INT8 `.tflite`,
-a C-array header, the frontend specification, and a held-out report.
+a C-array header, the frontend specification, float checkpoint, training history,
+and evaluation report. `selection-frozen.json` saves the model, data and trainer
+hashes, gate coefficients and chosen cutoff before any test predictions.
+`replay.json` retains candidate scores, associated timestamps and one-to-one
+clap/pair matches. No timestamp can explain multiple ground-truth events.
 
 The report includes thresholded clap recall, a two-class confusion matrix,
 and full-recording **host-reference** false double-clap activations per hour.
@@ -188,6 +219,37 @@ those results. When rerunning against already-inspected recordings during
 development, pass `--test-role diagnostic`; this is recorded in the report.
 Positive-trial reports also retain annotation review notes and unresolved
 ground-truth limitations.
+
+## Improvement using the existing room recordings
+
+The improved default was trained on the same group A recordings, selected with
+group B, and replayed on previously inspected group C. No extra recordings or
+model-generated labels were added. Group C failures informed development, so
+these results are **diagnostic**, not a fresh estimate of unseen accuracy.
+
+| Existing-recording result | Previous model/pipeline | Improved model/pipeline |
+| --- | ---: | ---: |
+| Validation reviewed clap recall | 35/38 | 38/38 |
+| Diagnostic reviewed clap recall | 36/45 | 42/45 |
+| Diagnostic timed double-clap matches | 9/22 | 20/22 |
+| Unmatched diagnostic pair detections | 0 | 0 |
+| Diagnostic background false actions | 0 in 297.776 s | 0 in 297.776 s |
+| Model bytes | 9,496 | 9,944 |
+
+The improved model used 100 original reviewed training claps and 1,079 non-clap
+windows, expanded to 2,170 and 7,637 training variants/windows. The validation
+cutoff was 0.76171875, with two isolated accepted background candidates and no
+validation actions. All four verified negative recordings produced zero
+actions over 1,131.104 usable seconds (18.85 minutes); 715.552 seconds of that
+audio was used in training, so this combined number is not independent evidence.
+The single-clap validation recording also produced no actions.
+
+Two clearly timed pairs remain missed, beginning at 23.010 s and 44.868 s in the
+diagnostic pair recording. Their first claps have unusual spectral balance or
+masking. One further operator-confirmed pair still has an unresolved second
+onset and is excluded from the 22 timed comparisons. Labels were preserved.
+The complete laptop run took about 40 seconds; workstation training was not
+needed. The board continues to run DSP firmware.
 
 ## Deployment gates still outstanding
 
@@ -213,6 +275,7 @@ does not prove embedded memory or timing. The experiment remains a POC.
 python3 tools/project.py test
 .local/cnn-venv/bin/python tools/cnn_lab.py smoke
 .local/cnn-venv/bin/python tests/cnn_training_smoke.py
+.local/cnn-venv/bin/python tests/cnn_frontend_smoke.py
 ```
 
 The optional smoke checks use synthetic data in memory or a temporary directory

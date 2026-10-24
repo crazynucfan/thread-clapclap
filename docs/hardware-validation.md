@@ -418,3 +418,39 @@ Do not include Thread credentials or device storage.
   sessions are needed after further changes. The existing board still runs DSP
   firmware. Embedded CNN frontend parity, queues, arena/heap usage and timing
   remain unimplemented or unmeasured.
+
+### 2026-10-24: existing-sample CNN improvement
+
+- Kept the reviewed annotations and recording-group split. Training still uses
+  group A (100 claps / 1,079 non-clap windows), with no evaluation audio mixed
+  into augmentation. Gain, timing, noise, spectral balance, speed and short
+  reflection variants produced 2,170 clap / 7,637 non-clap training examples.
+- Changed the host proposals to 700 Hz high-band attacks with 32 ms cooldown,
+  so a rejected precursor cannot suppress the next clap for 160 ms. Stronger
+  1 kHz proposals supply extra training examples. Accepted windows are grouped
+  within 120 ms of the first candidate and timestamped by attack strength,
+  fixing duplicate recognition that cancelled a valid pair.
+- Normalizing waveform RMS before the log floor and retaining spatial features
+  with Flatten improved quiet-clap recognition. The 5,114-parameter network
+  exported as a fully INT8 9,944-byte model using only Conv2D, Reshape,
+  FullyConnected and Softmax. The batch dimension is fixed to one.
+- Class-balanced validation loss and full-stream threshold selection retained
+  all 38 validation claps at cutoff 0.76171875. Two isolated background
+  candidates were accepted, with no false validation actions and no actions
+  during the separate single-clap validation recording.
+- Complete diagnostic replay matched 20/22 timed pairs, up from 9/22, within
+  100 ms for both onsets. No unmatched pairs were detected. Reviewed-window
+  recall improved from 36/45 to 42/45. The remaining missed pairs begin at
+  23.010 s and 44.868 s. The additional pair with an unresolved second onset
+  remains excluded; no annotation was changed to match model predictions.
+- No false actions occurred in the 297.776 usable seconds of diagnostic
+  background, or in any other existing verified negative recording. Combined
+  exposure is 1,131.104 seconds, including 715.552 seconds used by training;
+  this combined count is diagnostic, not independent validation of a low rate.
+- The reproducible complete laptop run took about 40 seconds. The model, float
+  checkpoint, frozen protocol, scores and matched-timestamp report remain
+  private under `.local/`. All 95 default checks, numeric frontend regressions
+  and the synthetic train/INT8/export/C-header integration check passed.
+- Group C is a development diagnostic because its failures informed these
+  changes. No CNN model was flashed or enabled. MCU frontend parity, memory,
+  queue load and inference timing still need measurement with Thread active.

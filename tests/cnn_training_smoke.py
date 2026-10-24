@@ -81,6 +81,18 @@ def main():
         assert report['test_negative_seconds'] > 0
         assert report['classes'] == ['clap', 'non_clap']
         assert report['test_role'] == 'diagnostic'
+        assert report['frontend']['mode'] == 'rms'
+        assert report['parameters'] == 5114
+        assert report['operators'] == ['CONV_2D', 'FULLY_CONNECTED', 'RESHAPE', 'SOFTMAX']
+        assert report['gate']['cooldown_ms'] == 32
+        assert report['mining_gate']['highpass_hz'] == 1000
+        assert set(report['filter_sos_coefficients']) == {'700', '1000'}
+        frozen = json.loads((output / 'selection-frozen.json').read_text())
+        assert frozen['model_sha256'] == report['model_sha256']
+        assert frozen['threshold'] == report['threshold']
+        replay = json.loads((output / 'replay.json').read_text())
+        assert len(replay['records']) == 5  # train negative + all validation/test
+        assert all('pair_matching' in record for record in replay['records'])
         assert np.asarray(report['test_confusion_rows_actual']).shape == (2, 2)
         source = directory / 'header.cpp'
         source.write_text('#include "' + str(output / 'ClapModel.local.h') + '"\n'
