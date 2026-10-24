@@ -328,3 +328,34 @@ Do not include Thread credentials or device storage.
   integration, real tensor-arena/heap use, inference timing, and installation-room
   recognition/false-activation tests remain outstanding. The device's normal
   DSP detector remains the default.
+
+### 2026-10-24: Apple Silicon capture preparation and physical waveform check
+
+- Added a structured installation-room collection plan covering individual
+  claps, object impacts, switch/click sounds and natural room background.
+  Independent recording groups separate training, validation and final testing;
+  longer no-clap recordings measure full-pipeline false double-clap activations.
+- Installed isolated capture and Python 3.12 training environments on the Mac.
+  All 82 default checks passed. The optional full synthetic training/INT8/export
+  check also passed on Apple Silicon and produced a 9,600-byte model. Synthetic
+  results do not measure real clap recognition.
+- The Arduino-distributed ctags helper was Intel-only on this Mac. A local
+  native build of Arduino's 5.8-arduino11 source, with its reserved attribute
+  macros renamed to avoid a current SDK collision, allowed the pinned firmware
+  build to complete. These local tools remain outside tracked source.
+- The waveform firmware compiled to 2,689,080 bytes of app flash and 144,444
+  bytes of static RAM. Upload and flash hash verification succeeded without a
+  commissioning-data erase.
+- A physical four-second unlabelled capture delivered all 64,000 ADC samples,
+  valid packet integrity and a valid completion marker. ADC range was 700–1066,
+  with zero near-rail samples and zero CRC failures. WAV integrity validation
+  and host event proposals succeeded. This checks transport, not clap signal
+  quality or a false-trigger rate; its two proposed events remain unreviewed.
+- Raw audio, annotations and test logs remain under ignored `.local/`. The
+  transport sample is excluded from the training manifest. Labelled physical
+  training/evaluation sessions and embedded CNN inference remain outstanding.
+- A subsequent USB status check showed normal DSP sampling, zero DMA overflows,
+  retained commissioning, Thread attachment and router role. Logging was left
+  off and the port closed. Runtime free 8-bit heap was 125,976 bytes, with a
+  largest block of 110,580 bytes and minimum free heap of 125,924 bytes at that
+  observation. These are available-heap readings, not a tensor-arena benchmark.
