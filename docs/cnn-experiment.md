@@ -27,7 +27,7 @@ needed to collect data or evaluate a host model.
 | Spectrogram | 256-point periodic Hann, 128-sample hop, 32 mel bands, 125–3800 Hz |
 | CNN input | 15 × 32 × 1 log-power mel features, fixed clipping/scaling |
 | Network | Three 3×3 stride-2 convolutions: 8, 16, 24 channels; global average; dense softmax |
-| Classes | clap, knock/tap, click/other impact, other/background |
+| Classes | clap, non-clap (all other sounds) |
 | Export | Full INT8 input, activations, weights and output; INT32 biases |
 | Model flash target | Under 80 KiB; synthetic conversion check produced 9,600 bytes |
 | Tensor arena target | Under 150 KiB; **not measured or reserved** |
@@ -98,8 +98,8 @@ families, collection targets, independent recording groups and longer no-clap
 tests. It distinguishes training negatives from reserved evaluation exposure.
 
 Aim initially for 100–200 individual claps and comparable knock/tap and click
-examples, plus realistic room background, speech, TV and silence. Capture each
-class in its own labelled session and record what actually happened. Keep
+examples, plus realistic room background, speech, TV and silence. Capture claps
+separately from confirmed no-clap sessions and record what actually happened. Keep
 gain and placement fixed initially, then cover normal clap distances and
 directions. Test single claps, pairs and triples too.
 
@@ -113,7 +113,10 @@ per hour. A short quiet recording cannot establish a low false-trigger rate.
 `--label` is a session hint, not an automatic ground-truth label. Review the
 proposed events and any missed claps using the known capture protocol and
 local waveform playback. A dataset can otherwise silently learn desk noises
-as claps. Choose `other` for normal speech/background; `knock` includes taps.
+as claps. Use `non_clap` for impacts, switches, rattles, speech and background.
+A verified no-clap recording may mix all these sounds, including impacts over
+fan hum. The binary model only decides whether an event is a clap. Older
+`knock`, `click` and `other` annotations are accepted and mapped to `non_clap`.
 
 ## Review, train and export locally
 
@@ -129,13 +132,14 @@ python3.12 -m venv .local/cnn-venv
   .local/cnn/room-A-claps-01.wav --output .local/cnn/room-A-claps-01.labels.json
 ```
 
-Edit every `unlabelled` event to `clap`, `knock`, `click`, or `other`. Onsets
+Edit every `unlabelled` event to `clap` or `non_clap`. Onsets
 are milliseconds into the recording, after its two-second calibration. Add
 any actual claps the proposal gate missed; they matter for measuring the full
 pipeline. Each event needs a complete 32 ms pretrigger / 224 ms posttrigger
 window. For a recording confirmed to contain **no claps**, set
-`negative_only: true`; this also supplies ordinary background windows and
-counts its usable duration as negative exposure.
+`negative_only: true` and label its proposed events `non_clap`; this also
+supplies ordinary background windows and counts its usable duration as negative
+exposure. The capture hint alone does not verify the absence of claps.
 
 Copy [the example manifest](../examples/cnn-manifest.example.json) to
 `.local/cnn/manifest.json` and point it at reviewed annotation files. The
@@ -151,11 +155,11 @@ guards, not an adequate accuracy study on their own.
 
 Training selects weights on training recordings, early stopping on validation
 loss, and the clap threshold on validation non-claps. Quantization calibration
-uses training examples from all four classes. Final test predictions do not
+uses training examples from both classes. Final test predictions do not
 select weights or threshold. The private output includes an INT8 `.tflite`,
 a C-array header, the frontend specification, and a held-out report.
 
-The report includes thresholded clap recall, a four-class confusion matrix,
+The report includes thresholded clap recall, a two-class confusion matrix,
 and full-recording **host-reference** false double-clap activations per hour.
 It also reports a Poisson upper bound when no false event was observed; that
 bound assumes stationary events and does not establish room reliability.

@@ -359,3 +359,28 @@ Do not include Thread credentials or device storage.
   off and the port closed. Runtime free 8-bit heap was 125,976 bytes, with a
   largest block of 110,580 bytes and minimum free heap of 125,924 bytes at that
   observation. These are available-heap readings, not a tensor-arena benchmark.
+
+### 2026-10-24: binary labels for mixed real-room negatives
+
+- Changed the host CNN output and report to clap/non-clap. Mixed recordings of
+  objects, switches, doors, rattling and steady background can now share one
+  verified negative label. Existing knock/click/other annotations map to
+  non-clap; the waveform protocol and deployed DSP firmware are unchanged.
+- Added default regressions for older annotation compatibility, verified mixed
+  negatives and background sampling, and rejection of claps, unknown labels or
+  unfinished labels in a negative-only recording. All 85 default checks passed.
+- The optional synthetic end-to-end training, INT8 conversion, two-output
+  inference, held-out replay and C-array compilation check passed on the Mac.
+  Its 9,496-byte model verifies plumbing, not acoustic recognition.
+- Private reviewed training data currently contains 49 clap windows and 214
+  non-clap windows from three source recordings. The operator identified the
+  mixed negative as placements, taps, switches, door slams, chain rattling and
+  fan hum near its end. Loud sounds during the hum and the final impact were
+  retained in complete negative windows. This is training data, not held-out
+  evidence of a false-trigger rate.
+- Waveform review exposed missed or displaced host trigger proposals on some
+  claps; their training onsets were corrected manually. The trigger remains
+  provisional and must be assessed with the CNN in full-recording evaluation.
+  Independent validation/test sessions, a model trained on real audio, and
+  embedded inference remain outstanding. All real audio and annotations stay
+  private under ignored `.local/`.

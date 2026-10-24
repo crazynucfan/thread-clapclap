@@ -199,7 +199,8 @@ def main():
     capture = commands.add_parser('record')
     capture.add_argument('--port', required=True)
     capture.add_argument('--duration', type=int, choices=range(4, 601), default=30, metavar='4..600')
-    capture.add_argument('--label', choices=('clap', 'knock', 'click', 'other'), required=True)
+    capture.add_argument('--label', choices=('clap', 'non_clap', 'knock', 'click', 'other'), required=True,
+                         help='session hint; knock/click/other remain accepted for older workflows')
     capture.add_argument('--group', required=True, help='recording session ID; keep each group in one dataset split')
     capture.add_argument('--output', type=Path, required=True)
     inspect = commands.add_parser('inspect')

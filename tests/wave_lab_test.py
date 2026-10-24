@@ -26,6 +26,42 @@ def packet(sequence=0, identity=42):
 
 
 class WaveTests(unittest.TestCase):
+    def binary_dataset(self, directory, labels, negative_only=False):
+        """Exercise annotation loading without optional numeric dependencies."""
+        path = directory / 'session.wav'
+        path.write_bytes(b'waveform fixture; frontend is mocked in this loader test')
+        annotations = directory / 'session.labels.json'
+        annotations.write_text(json.dumps({'schema': 1, 'recording': path.name,
+            'wav_sha256': lab.digest(path), 'negative_only': negative_only,
+            'events': [{'onset_ms': 2100 + i * 300, 'label': label}
+                       for i, label in enumerate(labels)]}))
+        manifest = directory / 'manifest.json'
+        manifest.write_text(json.dumps({'schema': 1, 'recordings': [
+            {'annotations': annotations.name, 'split': 'train'}]}))
+        with patch.object(cnn, 'audio', return_value=(
+                {'group': 'session-A', 'duration_s': 4}, [0] * 32000)), \
+                patch.object(cnn, 'window', return_value=None):
+            return cnn.dataset(manifest)[0]
+
+    def test_binary_labels_preserve_legacy_negative_annotations(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            record = self.binary_dataset(Path(temporary),
+                                         ['clap', 'non_clap', 'knock', 'click', 'other'])
+        self.assertEqual([label for _, label in record['events']], [0, 1, 1, 1, 1])
+
+    def test_verified_mixed_negatives_supply_only_non_clap_background(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            record = self.binary_dataset(Path(temporary), ['non_clap'], negative_only=True)
+        self.assertTrue(record['negative_only'])
+        self.assertGreater(len(record['events']), 1)
+        self.assertTrue(all(label == 1 for _, label in record['events']))
+
+    def test_binary_negatives_reject_claps_unknown_and_unreviewed_labels(self):
+        for label in ('clap', 'unlabelled', 'unknown_sound'):
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as temporary:
+                with self.assertRaises(ValueError):
+                    self.binary_dataset(Path(temporary), [label], negative_only=True)
+
     def test_fragmented_packets_and_text(self):
         decoder = lab.Decoder()
         result = []

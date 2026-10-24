@@ -17,7 +17,8 @@ import time
 
 import wave_lab
 
-CLASSES = ('clap', 'knock', 'click', 'other')
+CLASSES = ('clap', 'non_clap')
+LEGACY_NEGATIVES = frozenset(('knock', 'click', 'other'))
 RATE = 8000
 WINDOW = 2048
 PRE = 256
@@ -26,6 +27,15 @@ SPEC = {'sample_rate': RATE, 'window_samples': WINDOW, 'pretrigger_samples': PRE
         'mel_low_hz': 125, 'mel_high_hz': 3800, 'log_floor': 1e-6,
         'resampler': 'scipy-resample_poly-kaiser5-16k-to-8k',
         'normalisation': 'window DC removal; log(power-mel + 1e-6) clipped [-16, 4], scaled (log+16)/20'}
+
+
+def class_index(label):
+    """Keep reviewed older annotations usable with the binary model."""
+    if label in LEGACY_NEGATIVES:
+        return CLASSES.index('non_clap')
+    if label not in CLASSES:
+        raise ValueError('Invalid sound label: ' + str(label))
+    return CLASSES.index(label)
 
 
 def write_json(path, value):
@@ -93,7 +103,7 @@ def propose(path, output):
                         'group': metadata['group'], 'suggested_label': metadata['label'],
                         'negative_only': False,
                         'events': [{'onset_ms': start * 1000 / RATE, 'label': 'unlabelled'} for start in events]})
-    print(f'{len(events)} proposed sounds. Edit each label to clap/knock/click/other; do not label from model predictions.')
+    print(f'{len(events)} proposed sounds. Edit each label to clap/non_clap; do not label from model predictions.')
     print('For a verified no-clap recording, set negative_only=true and label proposed sounds; this also supplies background windows.')
 
 
@@ -123,22 +133,23 @@ def dataset(manifest_path):
         for event in sorted(annotations['events'], key=lambda event: event['onset_ms']):
             if event['label'] == 'unlabelled':
                 raise ValueError('Finish reviewing event labels before training: ' + path.name)
+            label = class_index(event['label'])
             onset = event['onset_ms']
-            if (event['label'] not in CLASSES or isinstance(onset, bool) or not math.isfinite(onset)
+            if (isinstance(onset, bool) or not math.isfinite(onset)
                     or onset < 2000 or onset <= last):
                 raise ValueError('Invalid class or event timestamp (first 2s are calibration)')
             sample = int(math.floor(onset * RATE / 1000 + .5))
             window(samples, sample)  # enforce complete context
-            if annotations.get('negative_only') and event['label'] == 'clap':
+            if annotations.get('negative_only') and label == CLASSES.index('clap'):
                 raise ValueError('negative_only recordings cannot contain annotated claps')
-            events.append((sample, CLASSES.index(event['label'])))
+            events.append((sample, label))
             last = onset
         # Only an explicitly confirmed negative may yield automatic background
         # windows; quiet sections of positive sessions are never auto-labelled.
         if annotations.get('negative_only') is True:
             for sample in range(2 * RATE, len(samples) - WINDOW, RATE):
                 if all(abs(sample - onset) >= WINDOW for onset, _ in events):
-                    events.append((sample, CLASSES.index('other')))
+                    events.append((sample, CLASSES.index('non_clap')))
         recordings.append({'path': recording, 'split': split, 'group': group, 'samples': samples,
                            'events': events, 'negative_only': annotations.get('negative_only') is True,
                            'duration_s': metadata['duration_s'], 'sha256': digest})
@@ -152,7 +163,7 @@ def build_model(tf):
         tf.keras.layers.Conv2D(16, 3, strides=2, padding='same', activation='relu'),
         tf.keras.layers.Conv2D(24, 3, strides=2, padding='same', activation='relu'),
         tf.keras.layers.GlobalAveragePooling2D(),
-        tf.keras.layers.Dense(4, activation='softmax')])
+        tf.keras.layers.Dense(len(CLASSES), activation='softmax')])
 
 
 def tensorflow():
@@ -182,8 +193,10 @@ def interpreter(tf, model):
     runtime = tf.lite.Interpreter(model_content=model, num_threads=1)
     runtime.allocate_tensors()
     inputs, outputs = runtime.get_input_details()[0], runtime.get_output_details()[0]
-    if inputs['dtype'] != np.int8 or outputs['dtype'] != np.int8 or list(inputs['shape']) != [1, 15, 32, 1]:
-        raise ValueError('Expected INT8 [1,15,32,1] input and INT8 output')
+    if (inputs['dtype'] != np.int8 or outputs['dtype'] != np.int8
+            or list(inputs['shape']) != [1, 15, 32, 1]
+            or list(outputs['shape']) != [1, len(CLASSES)]):
+        raise ValueError('Expected INT8 [1,15,32,1] input and INT8 [1,2] output')
     if any(np.issubdtype(tensor['dtype'], np.floating) for tensor in runtime.get_tensor_details()):
         raise ValueError('Export still contains floating-point tensors')
     operators = {op['op_name'] for op in runtime._get_ops_details()} - {'DELEGATE'}
@@ -230,7 +243,7 @@ def train(args):
                     for onset, label in record['events']]
         counts = Counter(label for _, _, label in examples)
         minimum = 20 if split == 'train' else 5
-        if any(counts[label] < minimum for label in range(4)):
+        if any(counts[label] < minimum for label in range(len(CLASSES))):
             raise ValueError(f'{split} needs at least {minimum} reviewed windows of each class; got {dict(counts)}')
         raw = np.stack([window(record['samples'], onset) for record, onset, _ in examples])
         arrays[split] = (spectrogram(raw, tf).numpy(), np.array([label for _, _, label in examples]))
@@ -238,7 +251,7 @@ def train(args):
     model = build_model(tf)
     model.compile(optimizer=tf.keras.optimizers.Adam(.001), loss='sparse_categorical_crossentropy', metrics=['accuracy'])
     x, y = arrays['train']
-    weights = {int(label): len(y) / (4 * count) for label, count in Counter(y).items()}
+    weights = {int(label): len(y) / (len(CLASSES) * count) for label, count in Counter(y).items()}
     # Use bounded tf.data threading on laptops and CI workers.
     options = tf.data.Options(); options.threading.private_threadpool_size = 1
     def batches(split, shuffle=False):
@@ -251,7 +264,7 @@ def train(args):
     training = training.shuffle(len(y), seed=args.seed).batch(16).with_options(options)
     model.fit(training, validation_data=batches('validation'), epochs=args.epochs,
               callbacks=[tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=8, restore_best_weights=True)], verbose=2)
-    representative = np.concatenate([x[y == label][:50] for label in range(4)])
+    representative = np.concatenate([x[y == label][:50] for label in range(len(CLASSES))])
     converted = convert(tf, model, representative)
     runtime, inputs, outputs, operators = interpreter(tf, converted)
     validation_scores = np.stack([predict(runtime, inputs, outputs, f) for f in arrays['validation'][0]])
@@ -263,7 +276,7 @@ def train(args):
         positive = labels == 0
         accepted = (np.argmax(scores, axis=1) == 0) & (scores[:, 0] >= threshold)
         return float(np.mean(accepted[positive]))
-    confusion = np.zeros((4, 4), dtype=int)
+    confusion = np.zeros((len(CLASSES), len(CLASSES)), dtype=int)
     test_scores = []
     for features, label in zip(*arrays['test']):
         scores = predict(runtime, inputs, outputs, features)
@@ -322,13 +335,13 @@ def smoke():
     raw = np.random.default_rng(1).normal(0, .03, (8, WINDOW)).astype(np.float32)
     features = spectrogram(raw, tf).numpy()
     model.compile(optimizer='adam', loss='sparse_categorical_crossentropy')
-    model.train_on_batch(features, np.arange(8) % 4)
+    model.train_on_batch(features, np.arange(8) % len(CLASSES))
     converted = convert(tf, model, features)
     runtime, inputs, outputs, operators = interpreter(tf, converted)
     before = time.perf_counter()
     values = predict(runtime, inputs, outputs, features[0])
     elapsed = time.perf_counter() - before
-    assert features.shape == (8, 15, 32, 1) and values.shape == (4,)
+    assert features.shape == (8, 15, 32, 1) and values.shape == (len(CLASSES),)
     assert np.isfinite(values).all()
     print(json.dumps({'synthetic_plumbing_only': True, 'model_bytes': len(converted),
                       'operators': operators, 'host_first_invoke_us': int(elapsed * 1e6),

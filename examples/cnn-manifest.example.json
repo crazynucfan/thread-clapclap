@@ -2,16 +2,10 @@
   "schema": 1,
   "recordings": [
     {"annotations": "room-A-claps.labels.json", "split": "train"},
-    {"annotations": "room-A-knocks.labels.json", "split": "train"},
-    {"annotations": "room-A-clicks.labels.json", "split": "train"},
-    {"annotations": "room-A-background.labels.json", "split": "train"},
+    {"annotations": "room-A-non-claps.labels.json", "split": "train"},
     {"annotations": "room-B-claps.labels.json", "split": "validation"},
-    {"annotations": "room-B-knocks.labels.json", "split": "validation"},
-    {"annotations": "room-B-clicks.labels.json", "split": "validation"},
-    {"annotations": "room-B-background.labels.json", "split": "validation"},
+    {"annotations": "room-B-non-claps.labels.json", "split": "validation"},
     {"annotations": "room-C-claps.labels.json", "split": "test"},
-    {"annotations": "room-C-knocks.labels.json", "split": "test"},
-    {"annotations": "room-C-clicks.labels.json", "split": "test"},
-    {"annotations": "room-C-background.labels.json", "split": "test"}
+    {"annotations": "room-C-non-claps.labels.json", "split": "test"}
   ]
 }

@@ -6,7 +6,7 @@ acoustics and are not a substitute for this training corpus. Setup, commands,
 annotation format and deployment requirements are in the
 [CNN experiment guide](cnn-experiment.md).
 
-The CNN classifies **individual sound events**. The separate sequence rule
+The CNN classifies **individual sound events as clap or non-clap**. The separate sequence rule
 requires exactly two recognised claps 160–599 ms apart. Record single claps,
 pairs and triples: a single or triple contains positive *clap* examples even
 though it must not activate the double-clap action.
@@ -32,23 +32,26 @@ capture suppresses Matter clicks while recording.
 
 ## Structured recordings
 
-Use short recordings of one known sound family at a time. Leave several
-seconds between individual examples so their context and identity are clear.
+Record claps separately from confirmed no-clap activity. Short recordings of
+one sound family make review easy; a no-clap session may also mix object
+placements, switches, doors, rattling chains and background hum. All receive
+the `non_clap` label. Leave several seconds between deliberate impacts so
+their context and identity are clear.
 Keep the first two seconds and final second quiet in every file. Review actual
 onsets afterward; a planned action time is not an exact acoustic label.
 
-| Label | Include | Initial collection target across all splits |
-| --- | --- | --- |
-| `clap` | Ordinary softer and louder claps, intended near/far distances, different directions and hand positions; later include other household users | About 160 individual claps |
-| `knock` | Putting cups, phones, books and other objects down; tapping/knocking tables, doors and furniture | About 100 impacts across several objects and surfaces |
-| `click` | Light switches on/off, plugs/buttons, keys and other short mechanical clicks | About 100 events across relevant devices |
-| `other` | Speech, TV/music, footsteps, doors/drawers, fabric movement and ordinary quiet room background | Several short sessions plus longer background recordings |
+| Training label | Sound family | Include | Initial collection target across all splits |
+| --- | --- | --- | --- |
+| `clap` | Hand claps | Ordinary softer and louder claps, intended near/far distances, different directions and hand positions; later include other household users | About 160 individual claps |
+| `non_clap` | Object impacts | Putting cups, phones, books and other objects down; tapping/knocking tables, doors and furniture | About 100 impacts across several objects and surfaces |
+| `non_clap` | Mechanical clicks | Light switches on/off, plugs/buttons, keys and other short mechanical clicks | About 100 events across relevant devices |
+| `non_clap` | Background and other activity | Speech, TV/music, footsteps, doors/drawers, curtain chains, fan hum and ordinary quiet room background | Several short sessions plus longer background recordings |
 
 These counts are starting collection goals, not a promise of accuracy. The
 trainer's lower per-class minimums only check that the pipeline has enough data
 to run. Diversity matters more than repeating an identical sound hundreds of
-times. A door slam or ambiguous impact can be labelled `other`; use consistent
-labels and ensure it is not accidentally labelled `clap`.
+times. Different negative sound families remain useful coverage even though
+they share a label. Older `knock`, `click` and `other` labels map to `non_clap`.
 
 For claps, start with isolated events, then include natural pairs and triples.
 Keep ordinary variation rather than requiring every clap to sound identical.
@@ -64,6 +67,16 @@ deliberate material, separate recordings for objects, switches and other sound
 families make event review easier. For the natural background, allow realistic
 speech, TV and household movement, with **no intentional claps**.
 
+Add separate podcast, music and TV recordings through the room's usual speakers
+at normal listening levels, captured by the installed microphone. Start with
+five minutes of each and record which source was playing in private notes.
+Choose material without applause or recorded claps for the first negative
+sessions. If those occur, note their times and decide their intended treatment
+before assigning labels; playback alone does not prove an event is a non-clap.
+Later, collect real claps over the same types of background so the training
+data does not associate all playback with the absence of claps. Use fresh
+source material for independent validation and final-test sessions.
+
 The current recorder accepts 4–600 seconds per file. Build longer exposure from
 several files, keeping the same recording-group ID for files from the same
 session. Account only for recorded usable time: pauses between files are not
@@ -75,7 +88,7 @@ add any real claps the trigger missed. This is essential: a CNN cannot classify
 a clap that its event trigger never supplies.
 
 For a recording verified to contain no claps, set `negative_only: true` and
-finish reviewing the proposed events. The existing loader also samples ordinary
+label the proposed events `non_clap`. The existing loader also samples ordinary
 background windows from these files. Do not turn every overlapping slice of
 silence into an example; that mainly duplicates easy background and can
 overwhelm the useful impacts. A mixed recording that contains a clap must not
@@ -86,7 +99,7 @@ be marked negative-only.
 Assign whole recording groups to splits before training. A practical initial
 allocation is:
 
-| Split | Example group | Clap / knock / click targets | Background |
+| Split | Example group | Claps / object impacts / mechanical clicks | Background |
 | --- | --- | --- | --- |
 | Training | `room-session-A` | 100 / 60 / 60 | About 10 minutes, including deliberate misfires |
 | Validation | `room-session-B` | 30 / 20 / 20 | About 5 minutes with fresh repetitions |
@@ -109,7 +122,7 @@ negative examples; do not silently train on the final test set.
 
 ## What to measure
 
-Report individual clap recall and confusion with each non-clap class, then
+Report individual clap recall and false clap classifications, then
 replay complete held-out recordings through the **trigger, CNN and pair rule**.
 Include missed double claps, single/triple behaviour, and false double-clap
 activations per recorded hour. Aggregate pair counts alone cannot identify

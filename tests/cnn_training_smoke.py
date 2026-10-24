@@ -36,9 +36,9 @@ def fixtures(directory):
                 age = np.arange(1000)
                 if label == 'clap':
                     pulse = rng.normal(0, 4000, len(age)) * np.exp(-age / 90)
-                elif label == 'knock':
+                elif index % 3 == 0:
                     pulse = np.sin(age * 2 * np.pi * 300 / 16000) * 4000 * np.exp(-age / 200)
-                elif label == 'click':
+                elif index % 3 == 1:
                     pulse = np.zeros(len(age)); pulse[:3] = [6000, -4000, 2000]
                 else:
                     pulse = np.sin(age * 2 * np.pi * 700 / 16000) * 200 * np.sin(age * np.pi / 1000)
@@ -64,7 +64,7 @@ def main():
         directory = Path(temporary)
         manifest, entries = fixtures(directory)
         records = cnn.dataset(manifest)
-        assert len(records) == 12
+        assert len(records) == 6
         # Refuse a source recording reused across splits, including copied
         # annotations and a group name that accidentally crosses a split.
         bad = directory / 'bad.json'
@@ -78,7 +78,8 @@ def main():
         assert report['model_bytes'] < 80 * 1024
         assert report['tensor_arena_bytes'] is None and report['esp32c6_inference_us'] is None
         assert report['test_negative_seconds'] > 0
-        assert len(report['test_confusion_rows_actual']) == 4
+        assert report['classes'] == ['clap', 'non_clap']
+        assert np.asarray(report['test_confusion_rows_actual']).shape == (2, 2)
         source = directory / 'header.cpp'
         source.write_text('#include "' + str(output / 'ClapModel.local.h') + '"\n'
                           'static_assert(clapModelLength == ' + str(report['model_bytes']) + ');\nint main(){}\n')
