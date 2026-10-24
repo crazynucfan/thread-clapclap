@@ -384,3 +384,37 @@ Do not include Thread credentials or device storage.
   Independent validation/test sessions, a model trained on real audio, and
   embedded inference remain outstanding. All real audio and annotations stay
   private under ignored `.local/`.
+
+### 2026-10-24: first real-audio binary CNN training and diagnostic replay
+
+- Completed private train/validation/test groups with 100/38/45 reviewed clap
+  windows and 1,079/216/438 non-clap windows respectively. Final captures passed
+  integrity checks. The operator confirmed all final positive attempts were
+  double claps; 22 pairs were clearly timed and one additional pair had an
+  unresolved second onset. That annotation limit is retained in the reports.
+- The 4,778-parameter CNN exported as a 9,496-byte fully INT8 model. Complete
+  laptop training/evaluation/export runs took 12.8 and 11.83 seconds. No GPU
+  migration was needed. The trained model and C-array header remain private.
+- The original max-negative-window cutoff was 0.98828125: validation recall was
+  16/38 claps, diagnostic recall 3/45 windows, and full replay detected zero
+  of the 22 timed pairs. Its zero false actions did not establish useful
+  recognition.
+- Threshold selection now uses validation clap recall and full verified
+  negative recordings through the trigger/classifier/pair rule. It selected
+  0.8359375, retaining 35/38 validation claps, with four isolated false-clap
+  classifications and zero validation false pairs. All 88 default checks and
+  the synthetic training/INT8/export integration check passed.
+- The rerun produced byte-identical model weights. Diagnostic replay accepted
+  36/45 labelled clap windows and detected 9/22 timed pairs. All nine detections
+  matched annotated pairs within 100ms per onset. There were zero false actions
+  in 297.776 usable seconds of background and zero actions in the separate
+  60-second single-clap validation recording. These short observations do not
+  establish a low long-term false-trigger rate.
+- Supplying reviewed onsets directly to the classifier yielded 13/22 pairs;
+  the current trigger reduced this to nine. Both classification and onset
+  proposals therefore need improvement. The model is not ready for deployment.
+- Session C was inspected while diagnosing the initial threshold failure.
+  Subsequent reuse is explicitly marked diagnostic; new independent held-out
+  sessions are needed after further changes. The existing board still runs DSP
+  firmware. Embedded CNN frontend parity, queues, arena/heap usage and timing
+  remain unimplemented or unmeasured.
