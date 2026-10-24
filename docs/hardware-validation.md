@@ -454,3 +454,45 @@ Do not include Thread credentials or device storage.
 - Group C is a development diagnostic because its failures informed these
   changes. No CNN model was flashed or enabled. MCU frontend parity, memory,
   queue load and inference timing still need measurement with Thread active.
+
+### 2026-10-24: private CNN deployed and live lamp test
+
+- Added opt-in CNN builds using private generated model/frontend assets, with
+  the existing ESP32 3.3.12 TensorFlow Lite Micro and ESP-NN libraries. Normal
+  builds retain DSP. No audio, annotation dataset, model weights or generated
+  inference fixtures were added to Git. The previous DSP image is retained
+  privately for rollback; uploading preserved Matter/Thread commissioning.
+- Ported centered 16-to-8 kHz resampling, the proposal gate, RMS-normalized
+  log-mel input, INT8 quantization, timestamp association and the exactly-two
+  pair rule. Candidate timestamps and classifier watermarks preserve third-clap
+  cancellation despite delayed overlapping windows. ADC acquisition continues
+  by DMA; inference runs only after the ADC is drained and Thread is connected.
+- Initial floating-point frontend builds were too slow and dropped queued
+  windows. The final frontend uses Q30 FIR/Hann/twiddle coefficients, Q24 FFT
+  arithmetic, integer accumulation and precomputed quantized log boundaries.
+  A 16-candidate queue and 1.024-second ring absorb burst load. Queue/ring faults
+  discard the gesture and recalibrate, with persistent drop counters.
+- Native replay compared 7,698 candidates across every existing negative
+  recording and the validation/diagnostic positive recordings. Input codes
+  differed from TensorFlow by at most one step, with no classifier decision
+  changes. The embedded gesture implementation preserved all pair outcomes:
+  20/22 timed diagnostic matches, no unmatched diagnostic pairs, and zero false
+  actions in the existing negative recordings. This remains diagnostic data.
+- The device passed synthetic frontend/quantization and positive/negative
+  inference fixtures at boot. Tensor arena use is 3,052 bytes, with 8,192 bytes
+  reserved. The final app uses 2,782,964 bytes (88% of the 3 MiB partition) and
+  197,004 bytes of static RAM. The retained DSP build also compiled successfully.
+- Live frontend work typically took about 19.6 ms and inference 5.6–6 ms.
+  Observed wall-time peaks reached 29.530 ms frontend, 10.977 ms inference and
+  37.432 ms combined service, including task preemption. Heap was 99,596 bytes
+  free with an 84,764-byte minimum and a 53,236-byte largest block. These values
+  apply to this model/core/build rather than a general resource guarantee.
+- The operator made five double-clap attempts. All five generated separate
+  Matter button clicks; the operator confirmed the lamps went on and off.
+  The board remained commissioned, connected and a Thread router. Final status
+  showed 738 classified proposals, zero queue drops and zero DMA overflows.
+  Verbose diagnostics were switched off after testing.
+- All 99 default checks passed, including four new native CNN gesture checks.
+  Private build manifests, firmware, parity results and device logs remain
+  under `.local/` and `.build/`. Longer fresh positive/negative trials are still
+  needed before claiming a reliable recognition or false-trigger rate.

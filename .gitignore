@@ -16,4 +16,9 @@ __pycache__/
 *.ogg
 *.pcm
 *.tflite
+*.keras
+*.npy
+*.npz
+*.labels.json
 ClapModel.local.h
+CnnTables.local.h

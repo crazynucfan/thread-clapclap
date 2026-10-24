@@ -24,12 +24,16 @@
 #include "AudioCapture.h"
 #include "WaveCapture.h"
 #include <esp_heap_caps.h>
+#include "CnnDetector.h"
 
 MatterGenericSwitch clapSwitch;
 ClapDetector detector(config::detector);
 AnalogAudio audio;
 AudioAnalyzer analyzer;
 ImpulseClapDetector audioDetector(config::audioDetector);
+#if defined(CLAP_USE_CNN) && CLAP_USE_CNN
+CnnDetector cnnDetector;
+#endif
 uint32_t lastAudioOverflow = 0;
 uint32_t lastAudioStatus = 0;
 uint32_t analyzedFrames = 0;
@@ -44,6 +48,9 @@ WaveCaptureFrame wavePacket;
 unsigned waveFill = 0;
 
 static void abortCapture(const char *reason) {
+#if defined(CLAP_USE_CNN) && CLAP_USE_CNN
+  cnnDetector.reset();
+#endif
   if (captureRemaining) Serial.printf("CAPTURE_ABORT %lu %s\n", static_cast<unsigned long>(captureSession), reason);
   capturePending = false;
   captureRemaining = 0;
@@ -104,6 +111,10 @@ static void handleSerialCommands() {
                     static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_8BIT)),
                     static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)),
                     static_cast<unsigned>(heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT)));
+#if defined(CLAP_USE_CNN) && CLAP_USE_CNN
+    } else if (!tooLong && strcmp(line, "CNN STATUS") == 0) {
+      cnnDetector.status(audio.overflows(),maxAnalysisUs);
+#endif
     } else if (!tooLong && (strcmp(line, "CAPTURE_STOP") == 0 || strcmp(line, "WAVE_STOP") == 0)) {
       abortCapture("stopped");
       audioDetector.reset(analyzer.timeMs());
@@ -301,15 +312,19 @@ static void processAudio(bool ready) {
   if (ready != lastReady) {
     if (!capturePending && !waveRemaining) abortCapture("connection_changed");
     audioDetector.reset(analyzer.timeMs());
+#if defined(CLAP_USE_CNN) && CLAP_USE_CNN
+    cnnDetector.reset();
+#endif
     lastReady = ready;
     if (diagnosticsEnabled) Serial.println("Connection changed: clear pending audio gesture and recalibrate for 2s.");
   }
   // At most 32ms of audio per loop; the Thread/Matter tasks keep getting CPU.
+  bool drained = false;
   for (unsigned batch = 0; batch < 4; ++batch) {
     uint16_t samples[AnalogAudio::samplesPerRead];
     uint32_t count = 0;
     const esp_err_t error = audio.read(samples, count);
-    if (error == ESP_ERR_TIMEOUT) break;
+    if (error == ESP_ERR_TIMEOUT) { drained = true; break; }
     if (error == ESP_ERR_INVALID_STATE) {
       abortCapture("stream_overrun");
       analyzer.reset();
@@ -327,13 +342,26 @@ static void processAudio(bool ready) {
       // Raw collection needs no FFT/classifier work and must never operate
       // lamps. Resume with fresh filter history and calibration afterward.
       captureWave(samples, count);
-      if (!waveRemaining) { analyzer.reset(); audioDetector.reset(0); }
+      if (!waveRemaining) {
+        analyzer.reset(); audioDetector.reset(0);
+#if defined(CLAP_USE_CNN) && CLAP_USE_CNN
+        cnnDetector.reset();
+#endif
+      }
       const uint32_t duration = micros() - startedUs;
       if (duration > maxAnalysisUs) maxAnalysisUs = duration;
       if (audio.overflows() != lastAudioOverflow) break;
       continue;
     }
     for (uint32_t i = 0; i < count; ++i) {
+#if defined(CLAP_USE_CNN) && CLAP_USE_CNN
+      if (!captureRemaining && !capturePending) {
+        // Joining Thread takes priority over inference. A connection change
+        // resets the complete stream, so the first connected 2s calibrate anew.
+        if (ready) cnnDetector.push(samples[i]);
+        continue;
+      }
+#endif
       if (!analyzer.push(samples[i])) continue;
       ++analyzedFrames;
       if (audio.overflows() != lastAudioOverflow) break;
@@ -374,6 +402,9 @@ static void processAudio(bool ready) {
                         static_cast<unsigned long>(captureSequence), static_cast<unsigned long>(captureDropped),
                         static_cast<unsigned long>(captureClicks));
           audioDetector.reset(analyzer.timeMs());
+#if defined(CLAP_USE_CNN) && CLAP_USE_CNN
+          cnnDetector.reset();
+#endif
         }
       } else if (result.doubleClap && !capturePending && audio.overflows() == lastAudioOverflow) reportDoubleClap(ready);
     }
@@ -383,15 +414,28 @@ static void processAudio(bool ready) {
     // samples are consumed; the recovery path above runs on the next loop.
     if (audio.overflows() != lastAudioOverflow) break;
   }
+#if defined(CLAP_USE_CNN) && CLAP_USE_CNN
+  if (ready && drained && !captureRemaining && !capturePending && !waveRemaining
+      && audio.overflows() == lastAudioOverflow) {
+    const bool clicked = cnnDetector.service(diagnosticsEnabled);
+    if (clicked && audio.overflows() == lastAudioOverflow) reportDoubleClap(ready);
+  }
+#else
+  (void)drained;
+#endif
   const uint32_t now = millis();
   if (diagnosticsEnabled && !captureRemaining && !waveRemaining && now - lastAudioStatus >= 2000) {
     lastAudioStatus = now;
+#if defined(CLAP_USE_CNN) && CLAP_USE_CNN
+    cnnDetector.status(lastAudioOverflow,maxAnalysisUs);
+#else
     const auto &f = analyzer.features();
     Serial.printf("Audio status: frames=%lu rms=%.1f noise=%.1f raw=%.0f range=%u..%u clip=%.2f accepted=%lu rejected=%lu dma_overflows=%lu max_batch_us=%lu\n",
                   static_cast<unsigned long>(analyzedFrames), f.rms, audioDetector.noiseRms(),
                   f.rawMean, f.rawMin, f.rawMax, f.clippedFraction,
                   static_cast<unsigned long>(acceptedAudioClaps), static_cast<unsigned long>(rejectedAudioSounds),
                   static_cast<unsigned long>(lastAudioOverflow), static_cast<unsigned long>(maxAnalysisUs));
+#endif
   }
 }
 
@@ -442,6 +486,9 @@ void setup() {
   updateThreadStatus();
   detectionStarted = millis();
   if (config::useAnalogAudio) {
+#if defined(CLAP_USE_CNN) && CLAP_USE_CNN
+    if (!cnnDetector.begin()) fatal("FATAL: CNN allocation or model/frontend self-test failed; no actions enabled.");
+#endif
     const esp_err_t error = audio.begin(config::audioPin, AudioAnalyzer::sampleRate);
     if (error != ESP_OK) {
       Serial.printf("ADC start error: %s\n", esp_err_to_name(error));
@@ -449,7 +496,12 @@ void setup() {
     }
     analyzer.reset();
     audioDetector.reset(0);
+#if defined(CLAP_USE_CNN) && CLAP_USE_CNN
+    cnnDetector.reset();
+    Serial.printf("CNN mode: AOUT -> GPIO%u, 16kHz -> 8kHz, event-triggered INT8 model. Keep quiet for 2s.\n", config::audioPin);
+#else
     Serial.printf("Analog burst-score mode: AOUT -> GPIO%u, 16kHz / 256 samples / 50%% overlap. Keep quiet for 2s.\n", config::audioPin);
+#endif
   } else {
     detector.reset(detectionStarted, digitalRead(config::soundPin) == LOW);
     attachInterrupt(digitalPinToInterrupt(config::soundPin), captureSoundEdge, CHANGE);
@@ -460,7 +512,7 @@ void setup() {
 
 void loop() {
   // Protect Matter's state reads against the CHIP task. Sound detection keeps
-  // running during commissioning and disconnection; offline events are dropped.
+  // ADC acquisition continues offline; CNN inference starts after Thread joins.
   chip::DeviceLayer::PlatformMgr().LockChipStack();
   const bool commissioned = Matter.isDeviceCommissioned();
   const bool ready = commissioned && Matter.isThreadConnected();

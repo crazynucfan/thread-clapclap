@@ -1,8 +1,8 @@
 # Event-triggered CNN proof of concept
 
-This is an experimental host training workflow and USB waveform-capture
-extension. **The board still runs the DSP detector. No trained CNN or embedded
-CNN inference runtime is shipped or enabled.** Use at your own risk, with no
+This is an experimental training, waveform-capture and opt-in device inference
+workflow. **The development board runs a private CNN build. Normal builds use
+DSP, and no trained model weights are shipped in this repository.** Use at your own risk, with no
 commitment to maintenance, support, or updates.
 
 The first step is recording the actual microphone on the installation-room
@@ -31,14 +31,14 @@ needed to collect data or evaluate a host model.
 | Classes | clap, non-clap (all other sounds) |
 | Export | Full INT8 input, activations, weights and output; INT32 biases |
 | Model flash target | Under 80 KiB; improved real-audio export is 9,944 bytes |
-| Tensor arena target | Under 150 KiB; **not measured or reserved** |
-| ESP32-C6 inference target | Under 30 ms if feasible; **not benchmarked** |
+| Tensor arena | 8 KiB reserved; 3,052 bytes used by the current model |
+| ESP32-C6 processing | Typically about 20 ms frontend + 6 ms inference; wall-time peaks include Thread task preemption |
 
 Model file size does not establish embedded resource usage. Normal firmware already uses substantial RAM for Matter/Thread; its
 linker headroom is not available tensor-arena space. The USB `MEMORY` command
 prints current free, largest contiguous, and minimum free 8-bit heap.
 
-The host reference runs the CNN only on detected transients. A 256 ms window
+Both the host reference and device run the CNN only on detected transients. A 256 ms window
 can overlap another clap 160 ms later. Embedded inference must queue overlapping
 windows and preserve onset timestamps while ADC/DMA continues. It must not
 stop sampling while waiting for a window or inference. Pair timeout handling
@@ -51,8 +51,11 @@ cluster indefinitely. The strongest 1 kHz high-band attack in the following
 32 ms supplies its timestamp; CNN score breaks ties. An early window can see a
 future clap and score as highly as the true attack. Choosing by score alone
 can count that clap twice and cancel a valid pair. The more sensitive gate also
-increases candidate load; MCU queue and worst-case processing measurements are
-still required.
+increases candidate load. The device uses a 16-candidate queue and a
+1.024-second sample ring. It drains ADC data before processing one ready
+candidate, and discards the gesture on queue/ring overflow rather than using
+stale audio. The classifier watermark prevents the pair timer from firing
+before a possible third clap has been classified.
 
 ## First capture on a macOS M1 Pro
 
@@ -249,25 +252,59 @@ diagnostic pair recording. Their first claps have unusual spectral balance or
 masking. One further operator-confirmed pair still has an unresolved second
 onset and is excluded from the 22 timed comparisons. Labels were preserved.
 The complete laptop run took about 40 seconds; workstation training was not
-needed. The board continues to run DSP firmware.
+needed. This model was subsequently integrated into an opt-in device build.
 
-## Deployment gates still outstanding
+## Build and deploy a private model
 
-The exported header is **not linked into the firmware**. Before deploying it:
+Use the current RMS/flat export. The pinned ESP32 core already contains
+TensorFlow Lite Micro and ESP-NN; no extra Arduino library is required.
+Generate assets using the isolated training environment:
 
-1. Check microphone recordings for clipping, signal quality and usable class
-   separation, then review held-out recognition and negative exposure.
-2. Port the specified resampler, trigger, DC removal and log-mel frontend to
-   the MCU and verify numerical/input-quantization agreement with host fixtures.
-3. Integrate the four required TFLite Micro operators, queue overlapping event
-   windows, preserve onset timing, and verify the host pair rule on the board.
-4. Measure real tensor-arena usage and heap headroom with Matter/Thread active,
-   total firmware flash, worst-case inference time, dropped windows and DMA
-   overflows. Reduce model/arena targets if they do not fit.
-5. Repeat installation-room positives and continuous negative trials on-device.
+```sh
+.local/cnn-venv/bin/python tools/cnn_deploy.py .local/cnn/experiment-05 \
+  --output .local/cnn/device-assets
+.local/cnn-venv/bin/python tools/cnn_embedded_check.py .local/cnn/experiment-05 \
+  --assets .local/cnn/device-assets --output .local/cnn/embedded-parity.json
+python3 tools/project.py build --cnn-assets .local/cnn/device-assets
+python3 tools/project.py flash --port /dev/cu.usbmodemXXXX
+```
 
-These steps require the actual board and real recordings; host model size
-does not prove embedded memory or timing. The experiment remains a POC.
+Replace the experiment and USB port with your own. If using an isolated Arduino
+CLI, pass its `--cli` and `--cli-config` options before `build` or `flash`.
+The build copies source plus private assets into ignored `.build/` staging;
+it never adds the model to tracked firmware files. Build metadata records the
+model and firmware hashes. A normal `build` without `--cnn-assets` produces
+DSP firmware. Uploading preserves the existing Matter/Thread credentials.
+Keep the previous app binary if you need a rollback; do not erase NVS.
+
+The embedded frontend uses the same centered Kaiser-5 resampler, with 20 input
+samples of delivery delay while preserving onset timestamps. Q30 FIR/Hann and
+twiddle coefficients, Q24 accumulation/FFT, sparse mel weights and precomputed
+INT8 log-mel boundaries avoid expensive software floating-point work. Replay of
+all existing negative recordings and validation/diagnostic positives preserved
+every candidate timestamp and classifier decision. Input codes differed by at
+most one step; complete pair results were unchanged, including 20/22 timed
+diagnostic matches and zero false actions in existing negative recordings.
+
+At boot, frontend and inference fixtures must pass before sampling/actions are
+enabled. Inference starts after Thread connects, followed by two seconds of
+noise calibration. Connection changes, capture completion and audio faults
+discard pending gestures. ADC/DMA remains active during inference. Normal
+diagnostics stay off, including when powered without a USB host.
+
+Send `CNN STATUS` over USB for the active model hash, inference/frontend time,
+arena usage, heap, queue depth/drops and DMA overflows. `LOG ON` prints candidate
+scores and Matter events; `LOG OFF` disables it. `MEMORY` reports heap headroom.
+`WAVE_CAPTURE` still suppresses actions. Legacy `CAPTURE` evaluates the DSP
+feature path and retains its existing replay fingerprint, even in a CNN build.
+
+The current build uses approximately 2.783 MB of the 3 MiB app partition and
+197 KB of static RAM. Live checks measured about 99 KB free heap, with an
+84.8 KB minimum, while commissioned and connected as a Thread router. Dense
+background processing completed with zero queue drops and zero DMA overflows
+in the observed run. These measurements are specific to this model/core/build;
+repeat them after changing the architecture or frontend. Fresh on-device
+positive and continuous negative trials remain necessary for reliability claims.
 
 ## Developer checks
 

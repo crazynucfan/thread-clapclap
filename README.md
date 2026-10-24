@@ -11,8 +11,8 @@ as-is under the MIT licence, without warranty or any commitment to maintenance,
 support, or updates. It is experimental and is not a certified Matter product.
 
 **Status:** the current burst-scoring firmware builds with Arduino ESP32
-**3.3.12**. All **82 automated checks** pass: 64 native C++ checks (including
-45 retained legacy checks) and eighteen capture/replay checks. Earlier firmware
+**3.3.12**. All **99 automated checks** pass: 68 native C++ checks (including
+45 retained legacy checks) and 31 Python checks. Earlier firmware
 was commissioned into Home Assistant, became a Thread router, and delivered
 physical double-clap events, but subsequent trials frequently missed. A labelled physical pair passed the new classifier and was missed by the old
 one on the same captured frames. A subsequent live pair also delivered a
@@ -20,11 +20,12 @@ button event to Home Assistant. A separate speech/tapping stress trial
 produced one false trigger with each classifier. Installation-room recognition
 and false-trigger rates still need validation.
 
-An [event-triggered CNN experiment](docs/cnn-experiment.md) adds opt-in private
-waveform capture and a host training/INT8 export workflow. **The deployed
-detector remains DSP-based; no trained CNN is shipped or enabled.** The guide
-includes macOS Apple Silicon capture instructions and outstanding deployment
-benchmarks. Recordings, labels, reports and model artifacts stay under `.local/`.
+An [event-triggered CNN workflow](docs/cnn-experiment.md) adds private waveform
+capture, training, INT8 export and opt-in device inference. The development
+device now runs a private trained CNN. Normal builds use DSP; model weights
+are not shipped in this repository. The guide covers generating private assets,
+checking frontend parity and building CNN firmware. Recordings, labels, reports
+and model artifacts stay under `.local/`.
 
 ## 1. Connect the hardware
 
@@ -313,8 +314,8 @@ your existing Border Router to connect Thread to the Home Assistant LAN.
 python3 tools/project.py test
 ```
 
-The **95 automated checks** retain the original 14 digital and 31 analog
-checks, add 17 burst-classifier/protocol and two waveform-protocol checks,
+The **99 automated checks** retain the original 14 digital and 31 analog
+checks, add 17 burst-classifier/protocol, two waveform-protocol and four CNN gesture checks,
 and run thirty-one Python checks for feature/waveform capture integrity,
 native replay, privacy guards, binary CNN labels, validation threshold selection,
 attack timestamp association, one-to-one matching, and the proposed host pair rule. Signal fixtures exercise coloured
