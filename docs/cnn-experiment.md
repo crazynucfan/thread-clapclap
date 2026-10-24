@@ -93,6 +93,10 @@ and writes remain nonblocking, with losses reported rather than hidden.
 
 ## Gather a useful private corpus
 
+Follow the [installation-room recording plan](cnn-recording-plan.md) for sound
+families, collection targets, independent recording groups and longer no-clap
+tests. It distinguishes training negatives from reserved evaluation exposure.
+
 Aim initially for 100–200 individual claps and comparable knock/tap and click
 examples, plus realistic room background, speech, TV and silence. Capture each
 class in its own labelled session and record what actually happened. Keep
