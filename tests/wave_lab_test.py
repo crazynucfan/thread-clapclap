@@ -62,6 +62,32 @@ class WaveTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     self.binary_dataset(Path(temporary), [label], negative_only=True)
 
+    def test_threshold_preserves_claps_despite_one_high_scoring_isolated_negative(self):
+        result = cnn.choose_threshold(
+            [(0.95, True), (0.96, True)],
+            [(0.90, True), (0.90, True), (0.99, True)],
+            [[(2500, 0.90, True), (2800, 0.90, True), (5000, 0.99, True)]])
+        self.assertEqual(result['clap_recall'], 1)
+        self.assertEqual(result['false_pairs'], 0)
+        self.assertEqual(result['false_trigger_claps'], 1)
+        self.assertGreater(result['threshold'], 0.90)
+        self.assertLessEqual(result['threshold'], 0.95)
+
+    def test_threshold_never_pairs_events_across_recordings(self):
+        result = cnn.choose_threshold([(0.80, True)], [(0.99, True), (0.99, True)],
+                                     [[(2500, 0.99, True)], [(2800, 0.99, True)]])
+        self.assertEqual(result['clap_recall'], 1)
+        self.assertEqual(result['false_pairs'], 0)
+        self.assertEqual(result['false_trigger_claps'], 2)
+
+    def test_threshold_requires_both_labels_and_verified_negative_recordings(self):
+        for positive, negative, streams in (([], [(0.5, True)], [[]]),
+                                            ([(0.5, True)], [], [[]]),
+                                            ([(0.5, True)], [(0.5, True)], [])):
+            with self.subTest(positive=positive, negative=negative, streams=streams):
+                with self.assertRaises(ValueError):
+                    cnn.choose_threshold(positive, negative, streams)
+
     def test_fragmented_packets_and_text(self):
         decoder = lab.Decoder()
         result = []

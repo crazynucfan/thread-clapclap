@@ -152,7 +152,8 @@ def dataset(manifest_path):
                     events.append((sample, CLASSES.index('non_clap')))
         recordings.append({'path': recording, 'split': split, 'group': group, 'samples': samples,
                            'events': events, 'negative_only': annotations.get('negative_only') is True,
-                           'duration_s': metadata['duration_s'], 'sha256': digest})
+                           'duration_s': metadata['duration_s'], 'sha256': digest,
+                           'annotation_review': annotations.get('review', {})})
     return recordings
 
 
@@ -230,6 +231,41 @@ def pairs(onsets):
     return total + (count == 2)
 
 
+def choose_threshold(positive_scores, negative_scores, negative_streams):
+    """Select a validation operating point for the complete double-clap action.
+
+    Window scores are (clap_score, top_class_is_clap). Each separate negative
+    recording supplies (onset_ms, clap_score, top_class_is_clap) events. Do not
+    join streams: events in different recordings cannot form a pair.
+    """
+    if not positive_scores or not negative_scores or not negative_streams:
+        raise ValueError('Threshold selection needs positive and negative validation windows '
+                         'and a verified negative-only validation recording')
+    choices = []
+    for step in range(128, 257):
+        threshold = step / 256
+        accepted = [[onset for onset, score, top in stream if top and score >= threshold]
+                    for stream in negative_streams]
+        false_pairs = sum(pairs(onsets) for onsets in accepted)
+        if false_pairs:
+            continue
+        choices.append({
+            'threshold': threshold,
+            'clap_recall': sum(top and score >= threshold for score, top in positive_scores)
+                / len(positive_scores),
+            'false_clap_windows': sum(top and score >= threshold for score, top in negative_scores),
+            'false_trigger_claps': sum(map(len, accepted)),
+            'false_pairs': false_pairs,
+        })
+    if not choices:
+        raise ValueError('No validation threshold rejected false double claps')
+    # Maximise clap recall with zero observed validation false pairs. Among
+    # equal-recall choices prefer fewer isolated false claps, then a higher
+    # cutoff. Report those isolated errors: zero false pairs is not zero errors.
+    return max(choices, key=lambda item: (item['clap_recall'], -item['false_clap_windows'],
+                                        -item['false_trigger_claps'], item['threshold']))
+
+
 def train(args):
     import numpy as np
     destination = wave_lab.private_path(args.output)
@@ -268,10 +304,26 @@ def train(args):
     converted = convert(tf, model, representative)
     runtime, inputs, outputs, operators = interpreter(tf, converted)
     validation_scores = np.stack([predict(runtime, inputs, outputs, f) for f in arrays['validation'][0]])
-    negative_scores = validation_scores[arrays['validation'][1] != 0, 0]
-    # Threshold chosen before opening test predictions. Reject every observed
-    # validation non-clap, while retaining a minimum 0.5 clap score.
-    threshold = max(.5, float(np.max(negative_scores)) + 1 / 256)
+    positive_scores, negative_scores, negative_streams = [], [], []
+    for scores, label in zip(validation_scores, arrays['validation'][1]):
+        item = (float(scores[0]), bool(np.argmax(scores) == 0))
+        (positive_scores if label == 0 else negative_scores).append(item)
+    validation_negative_seconds = 0
+    for record in records:
+        if record['split'] != 'validation' or not record['negative_only']:
+            continue
+        stream = []
+        for onset in transients(record['samples']):
+            features = spectrogram(window(record['samples'], onset)[np.newaxis], tf).numpy()[0]
+            scores = predict(runtime, inputs, outputs, features)
+            stream.append((onset * 1000 / RATE, float(scores[0]), bool(np.argmax(scores) == 0)))
+        negative_streams.append(stream)
+        validation_negative_seconds += max(0, record['duration_s'] - 2 - (WINDOW-PRE) / RATE)
+    # All operating-point decisions use validation data and finish before any
+    # test predictions. The full trigger/classifier/pair path determines false
+    # actions; a single isolated false clap need not disable valid pairs.
+    operating_point = choose_threshold(positive_scores, negative_scores, negative_streams)
+    threshold = operating_point['threshold']
     def recall(scores, labels):
         positive = labels == 0
         accepted = (np.argmax(scores, axis=1) == 0) & (scores[:, 0] >= threshold)
@@ -301,8 +353,14 @@ def train(args):
         else:
             expected = pairs([onset * 1000 / RATE for onset, label in sorted(record['events']) if label == 0])
             positive_trials.append({'recording': str(record['path']), 'expected_pairs_from_annotations': expected,
-                                    'recognized_pairs': count})
+                                    'recognized_pairs': count,
+                                    'annotation_review': record['annotation_review']})
     report = {'schema': 1, 'classes': CLASSES, 'frontend': SPEC, 'threshold': threshold,
+              'test_role': getattr(args, 'test_role', 'held_out'),
+              'threshold_policy': 'maximise validation clap recall with zero observed full-record '
+                  'validation false pairs; break ties by isolated errors and higher cutoff',
+              'validation_operating_point': operating_point,
+              'validation_negative_seconds': validation_negative_seconds,
               'validation_clap_recall_at_threshold': recall(validation_scores, arrays['validation'][1]),
               'test_clap_recall_at_threshold': recall(np.stack(test_scores), arrays['test'][1]),
               'model_bytes': len(converted), 'operators': operators, 'test_confusion_rows_actual': confusion.tolist(),
@@ -359,6 +417,8 @@ def main():
     training.add_argument('--output', type=Path, required=True)
     training.add_argument('--epochs', type=int, choices=range(1, 501), default=80)
     training.add_argument('--seed', type=int, default=7)
+    training.add_argument('--test-role', choices=('held_out', 'diagnostic'), default='held_out',
+                          help='use diagnostic if these test recordings have already informed development')
     commands.add_parser('smoke', help='verify synthetic frontend/CNN/INT8 conversion; no saved model')
     args = parser.parse_args()
     if args.command == 'propose': propose(args.recording, args.output)

@@ -73,12 +73,14 @@ def main():
         except ValueError: pass
         else: raise AssertionError('dataset leakage was not rejected')
         output = directory / 'model'
-        cnn.train(argparse.Namespace(manifest=manifest, output=output, seed=1, epochs=1))
+        cnn.train(argparse.Namespace(manifest=manifest, output=output, seed=1, epochs=1,
+                                     test_role='diagnostic'))
         report = json.loads((output / 'report.json').read_text())
         assert report['model_bytes'] < 80 * 1024
         assert report['tensor_arena_bytes'] is None and report['esp32c6_inference_us'] is None
         assert report['test_negative_seconds'] > 0
         assert report['classes'] == ['clap', 'non_clap']
+        assert report['test_role'] == 'diagnostic'
         assert np.asarray(report['test_confusion_rows_actual']).shape == (2, 2)
         source = directory / 'header.cpp'
         source.write_text('#include "' + str(output / 'ClapModel.local.h') + '"\n'

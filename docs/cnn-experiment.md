@@ -154,7 +154,21 @@ guards, not an adequate accuracy study on their own.
 ```
 
 Training selects weights on training recordings, early stopping on validation
-loss, and the clap threshold on validation non-claps. Quantization calibration
+loss, and the operating threshold on validation claps plus complete verified
+no-clap validation recordings. The selector maximises labelled clap recall with
+zero observed validation false double-clap actions over a 0.5–1.0 cutoff grid.
+Equal-recall choices prefer fewer isolated false clap classifications, then a
+higher cutoff. A negative-only validation recording is required; isolated
+negative windows alone cannot measure the pair rule.
+
+An isolated high-scoring impact does not automatically raise the cutoff above
+nearly every real clap. The report retains counts of isolated false clap windows
+and trigger candidates, alongside false actions and observed negative duration.
+With an exactly-two-clap rule, changing the cutoff can also change third-clap
+cancellation; false-pair counts need not vary monotonically. Zero false actions
+in a short validation session does not establish a reliable false-trigger rate.
+
+Quantization calibration
 uses training examples from both classes. Final test predictions do not
 select weights or threshold. The private output includes an INT8 `.tflite`,
 a C-array header, the frontend specification, and a held-out report.
@@ -170,7 +184,10 @@ two claps 160–599 ms apart, with a third cancelling the sequence.
 Do not interpret a high class accuracy with low clap recall, or a threshold
 that rejects all claps, as success. Do not repeatedly tune against the final
 test recordings; reserve new test groups if you change the design after seeing
-those results.
+those results. When rerunning against already-inspected recordings during
+development, pass `--test-role diagnostic`; this is recorded in the report.
+Positive-trial reports also retain annotation review notes and unresolved
+ground-truth limitations.
 
 ## Deployment gates still outstanding
 
