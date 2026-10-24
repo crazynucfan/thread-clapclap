@@ -254,9 +254,66 @@ onset and is excluded from the 22 timed comparisons. Labels were preserved.
 The complete laptop run took about 40 seconds; workstation training was not
 needed. This model was subsequently integrated into an opt-in device build.
 
+## DS-CNN comparison and preserved working model
+
+The original 5,114-parameter model and exact five-attempt-tested firmware are
+preserved privately, including the float checkpoint, INT8 weights, cutoff,
+frontend assets and a SHA-256 manifest. Model files and recordings remain
+excluded from Git. A saved image can be uploaded without rebuilding or erasing
+the Matter/Thread pairing:
+
+```sh
+python3 tools/project.py flash --port /dev/cu.usbmodemXXXX \
+  --input-dir .local/deployment/rollback-working-cnn-2ae9802/firmware
+```
+
+Six depthwise-separable candidates used the same data, augmentation, frontend,
+seed and threshold policy. Two-block variants use 8/16/24 channels, or
+12/24/32 for the wider versions. The three-block versions use 12/24/32/32,
+with batch normalization folded into the exported integer convolutions.
+
+| Architecture | Keras parameters | INT8 file bytes | Timed diagnostic pairs | False actions on all existing negatives |
+| --- | ---: | ---: | ---: | ---: |
+| Working standard CNN | 5,114 | 9,944 | 20/22 | 0 |
+| DS + Flatten | 1,258 | 8,064 | 18/22 | 1 |
+| DS + global average | 922 | 7,736 | 18/22 | 4 |
+| Wider DS + Flatten | 2,106 | 9,776 | 19/22 | 1 |
+| Wider DS + global average | 1,658 | 9,336 | 18/22 | 1 |
+| Three-block DS + BN + Flatten | 3,986 | 14,648 | 18/22 | 0 |
+| Three-block DS + BN + global average | 3,538 | 14,216 | 18/22 | 0 |
+
+These are development diagnostics, not a new held-out accuracy estimate.
+Negative exposure includes training audio. Fewer parameters did not guarantee
+a smaller file: extra graph and quantization metadata increased the three-block
+exports. None earned replacement of the working model. The C6 remains on its
+original firmware; more negative recordings are required before deploying new
+networks. The next collection is described in the recording plan.
+
+`--architecture` also accepts `ds-flat`, `ds-gap`, `ds-wide-flat`, `ds-wide-gap`,
+`ds3-bn-flat` and `ds3-bn-gap`. Synthetic export checks cover depthwise kernels,
+global pooling, batch-normalization folding and fully integer static graphs.
+On-device speedups have **not** been measured for these candidates.
+
+A future timing comparison can be prepared by adding repeated
+`cnn_deploy.py --benchmark <experiment>` arguments. It generates a private model
+bank; `project.py build --cnn-assets <assets> --cnn-shadow` is required for such
+a bank. Use `build --output-dir .local/deployment/experiment-build` to keep
+experimental images separate from the default working flash files.
+Shadow builds suppress Matter clicks and measure 31 fixed-input
+inferences per model before ADC starts, then reload the control model. The
+prepared bank compiled, but was not flashed while the device was disconnected
+and collection was deferred. Collect the additional negatives and review the
+new results before running it on the board.
+
+The small delay after a pair is primarily the 600 ms wait to reject a third
+clap, plus completion of the 224 ms post-trigger context. Typical processing
+adds about 26 ms. The DS-CNN experiment preserves that pair rule and window;
+reducing network arithmetic alone cannot remove the deliberate wait.
+
 ## Build and deploy a private model
 
-Use the current RMS/flat export. The pinned ESP32 core already contains
+Use the RMS frontend and a supported architecture. The current working export
+is the standard `flat` CNN. The pinned ESP32 core already contains
 TensorFlow Lite Micro and ESP-NN; no extra Arduino library is required.
 Generate assets using the isolated training environment:
 
@@ -313,6 +370,7 @@ python3 tools/project.py test
 .local/cnn-venv/bin/python tools/cnn_lab.py smoke
 .local/cnn-venv/bin/python tests/cnn_training_smoke.py
 .local/cnn-venv/bin/python tests/cnn_frontend_smoke.py
+.local/cnn-venv/bin/python tests/cnn_ds_smoke.py
 ```
 
 The optional smoke checks use synthetic data in memory or a temporary directory

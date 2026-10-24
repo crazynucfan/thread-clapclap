@@ -9,7 +9,9 @@ import wave_lab
 
 
 def main():
- p=argparse.ArgumentParser(description=__doc__);p.add_argument('experiment',type=Path);p.add_argument('--assets',type=Path,required=True);p.add_argument('--output',type=Path,required=True);a=p.parse_args()
+ p=argparse.ArgumentParser(description=__doc__);p.add_argument('experiment',type=Path);p.add_argument('--assets',type=Path,required=True);p.add_argument('--output',type=Path,required=True)
+ p.add_argument('--allow-known-errors',action='store_true',help='experimental parity check only; retain known false actions instead of requiring zero')
+ a=p.parse_args()
  wave_lab.private_path(a.output)
  binary=a.assets/'frontend-replay'
  subprocess.run(['g++','-std=c++17','-O2','-Wall','-Wextra','-Werror','-pedantic','-I',str(a.assets),str(ROOT/'tools/cnn_frontend_replay.cpp'),'-o',str(binary)],check=True)
@@ -42,12 +44,12 @@ def main():
   row['embedded_gesture_actions']=actions
   rows.append(row);print('PARITY',r['path'].name,'candidates',len(onsets),'input_delta',max_delta,'changed',changed,'score_delta',max_score_delta,'decisions_changed',decisions_changed,'pairs',row['recognized_pairs'],flush=True)
   assert decisions_changed==0,(r['path'].name,'classifier decisions changed')
-  if r['negative_only']:assert row['recognized_pairs']==0
+  if r['negative_only'] and not a.allow_known_errors:assert row['recognized_pairs']==0
   baseline=reference_rows[str(r['path'])]
   assert row['recognized_pairs']==baseline['recognized_pairs']
   assert len(row['pair_matching']['matches'])==len(baseline['pair_matching']['matches'])
   assert row['pair_matching']['missed_expected']==baseline['pair_matching']['missed_expected']
- a.output.write_text(json.dumps({'schema':1,'model_sha256':report['model_sha256'],'scope':'native C++ arithmetic and full-record replay; on-device runtime still requires its self-test and resource measurements','records':rows},indent=2)+'\n')
+ a.output.write_text(json.dumps({'schema':1,'model_sha256':report['model_sha256'],'experimental_only':a.allow_known_errors,'scope':'native C++ arithmetic and full-record replay; on-device runtime still requires its self-test and resource measurements','records':rows},indent=2)+'\n')
  print('PASS embedded C++ frontend parity and complete diagnostic replay')
 
 if __name__=='__main__':main()

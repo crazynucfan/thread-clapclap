@@ -133,3 +133,40 @@ false-trigger rate. More independent background exposure is needed as the
 prototype improves. Host results also do not establish embedded reliability:
 MCU frontend parity, inference queues, memory, latency and audio-overflow checks
 remain required before replacing the deployed detector.
+
+## Next collection: additional negatives before another deployment
+
+Keep the current working CNN installed. The offline DS-CNN candidates have
+not beaten its pair/false-action result; add negative examples before deploying
+new networks. Reconnect the C6 with a USB data cable when ready to record.
+
+1. Record two to three minutes of targeted non-clap sounds for a new training
+   session (`room-session-D`): object placements and taps, switches, door sounds,
+   curtain chains, typing and media. Include ordinary pairs/triples of impacts
+   roughly 200–500 ms apart, since those can resemble a double-clap sequence.
+2. Make a separate confirmed no-clap room recording for reserved evaluation
+   (`room-session-E`), preferably five to ten minutes or longer. Keep this file
+   out of model/threshold selection until a candidate has been chosen. Do not
+   divide overlapping crops from the training recording into a test split.
+
+Keep gain and placement fixed. Speech, music/TV and fan hum are useful
+background, including when impacts occur over them. Avoid deliberate claps;
+report any accidental clap rather than labelling it as a negative. The operator
+must confirm the actual content before `negative_only=true` is assigned.
+
+Run collection locally so the terminal's `Recording` message controls timing:
+
+```sh
+.local/capture-venv/bin/python tools/wave_lab.py record \
+  --port /dev/cu.usbmodemXXXX --duration 180 --label non_clap \
+  --group room-session-D --output .local/cnn/room-D-negatives-01.wav
+
+.local/capture-venv/bin/python tools/wave_lab.py record \
+  --port /dev/cu.usbmodemXXXX --duration 300 --label non_clap \
+  --group room-session-E --output .local/cnn/room-E-negatives-reserved-01.wav
+```
+
+Check the port after reconnection and keep the first two seconds quiet. The
+working firmware's capture command suppresses lamp actions and resumes with
+fresh calibration afterward. All audio, real annotations and resulting model
+artifacts remain private under `.local/`.

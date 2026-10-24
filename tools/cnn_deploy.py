@@ -19,21 +19,22 @@ def array(name, values, kind='float'):
     return f'inline constexpr {kind} {name}[] = {{\n  ' + ',\n  '.join(', '.join(tokens[i:i+8]) for i in range(0,len(tokens),8)) + '\n};\n'
 
 
-def generate(experiment, destination):
+def generate(experiment, destination, benchmarks=()):
     import numpy as np
     from scipy.signal import firwin
     report = json.loads((experiment / 'report.json').read_text())
     blob = (experiment / 'clap.tflite').read_bytes()
     if hashlib.sha256(blob).hexdigest() != report['model_sha256']:
         raise ValueError('Model does not match experiment report')
-    if (report['frontend']['mode'] != 'rms' or report['architecture'] != 'flat'
+    supported = ('flat', 'ds-flat', 'ds-gap', 'ds-wide-flat', 'ds-wide-gap', 'ds3-bn-flat', 'ds3-bn-gap')
+    if (report['frontend']['mode'] != 'rms' or report['architecture'] not in supported
             or report['classes'] != ['clap','non_clap'] or report['gate'] != cnn.GATE_SPEC):
-        raise ValueError('Embedded frontend supports the RMS/flat binary model and current gate only')
+        raise ValueError('Embedded frontend requires an RMS binary model with a supported architecture and current gate')
     if report['frontend']['resampler'] != cnn.SPEC['resampler']:
         raise ValueError('Resampler mismatch')
     destination.mkdir(parents=True,exist_ok=True)
     tf = cnn.tensorflow()
-    rt, inp, out, _ = cnn.interpreter(tf,blob)
+    rt, inp, out, operators = cnn.interpreter(tf,blob)
     mel = tf.signal.linear_to_mel_weight_matrix(32,129,8000,125,3800).numpy()
     offsets, bins, weights = [0], [], []
     for band in range(32):
@@ -83,19 +84,53 @@ def generate(experiment, destination):
     header+='inline constexpr size_t clapModelLength=sizeof(clapModel);\n'
     header+=f'inline constexpr char clapModelSha256[]="{report["model_sha256"]}";\n'
     header+=f'inline constexpr float clapModelThreshold={report["threshold"]:.9e}f;\n'
+    header+=f'inline constexpr char clapModelArchitecture[]="{report["architecture"]}";\n'
+    header+=f'#define CLAP_MODEL_ARCHITECTURE "{report["architecture"]}"\n'
     header+=array('cnnSyntheticFeatures',quant.flatten(),'int8_t')
     header+=array('cnnPositiveFeatures',pq.flatten(),'int8_t')
     header+=array('cnnExpectedScores',[score[0],score[1],ps[0],ps[1]])
     (destination/'ClapModel.local.h').write_text(header)
+    benchmark_metadata=[]
+    benchmark_header=destination/'CnnBenchmark.local.h'
+    if benchmarks:
+        bank='#pragma once\n#include <cstddef>\n'
+        entries=[]
+        for index, candidate in enumerate(benchmarks):
+            candidate_report=json.loads((candidate/'report.json').read_text())
+            candidate_blob=(candidate/'clap.tflite').read_bytes()
+            digest=hashlib.sha256(candidate_blob).hexdigest()
+            if (digest!=candidate_report['model_sha256'] or candidate_report['frontend']!=report['frontend']
+                    or candidate_report['architecture'] not in supported):
+                raise ValueError('Benchmark model hash/frontend mismatch')
+            cr,ci,co,_=cnn.interpreter(tf,candidate_blob)
+            if ci['quantization']!=inp['quantization']:
+                raise ValueError('Benchmark models must use the same input quantization')
+            cr.set_tensor(ci['index'],pq[np.newaxis]);cr.invoke()
+            output_scale,output_zero=co['quantization']
+            expected=(cr.get_tensor(co['index'])[0].astype(np.float32)-output_zero)*output_scale
+            name=f'cnnBenchmarkBytes{index}'
+            bank+='alignas(16) '+array(name,candidate_blob,'unsigned char')
+            architecture=candidate_report['architecture']
+            entries.append(f'{{{name},"{architecture}","{digest}",{expected[0]:.9e}f,{expected[1]:.9e}f}}')
+            benchmark_metadata.append({'architecture':architecture,'model_sha256':digest,'experiment':str(candidate.resolve())})
+        bank+='struct CnnBenchmarkEntry {const unsigned char *data;const char *architecture;const char *sha256;float clap;float other;};\n'
+        bank+='inline constexpr CnnBenchmarkEntry cnnBenchmarkModels[]={\n'+',\n'.join(entries)+'\n};\n'
+        benchmark_header.write_text(bank)
+    elif benchmark_header.exists():
+        benchmark_header.unlink()
     (destination/'deployment.json').write_text(json.dumps({'schema':1,'experiment':str(experiment.resolve()),
         'model_sha256':report['model_sha256'],'threshold':report['threshold'],'test_role':report['test_role'],
+        'architecture':report['architecture'],'operators':operators,
+        'benchmark_models':benchmark_metadata,
         'generator_sha256':hashlib.sha256(Path(__file__).read_bytes()).hexdigest()},indent=2)+'\n')
     print(f'Generated private model and frontend tables in {destination}')
 
 
 def main():
-    p=argparse.ArgumentParser(description=__doc__);p.add_argument('experiment',type=Path);p.add_argument('--output',type=Path,required=True);a=p.parse_args()
+    p=argparse.ArgumentParser(description=__doc__);p.add_argument('experiment',type=Path);p.add_argument('--output',type=Path,required=True)
+    p.add_argument('--benchmark',type=Path,action='append',default=[],help='add an experimental model to a shadow-only kernel benchmark bank')
+    a=p.parse_args()
     cnn.wave_lab.private_path(a.output)
-    generate(a.experiment,a.output)
+    generate(a.experiment,a.output,a.benchmark)
 
 if __name__=='__main__':main()

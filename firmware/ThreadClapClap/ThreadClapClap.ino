@@ -245,6 +245,10 @@ static void updateThreadStatus() {
 }
 
 static void reportDoubleClap(bool ready) {
+#if defined(CLAP_CNN_SHADOW) && CLAP_CNN_SHADOW
+  if (diagnosticsEnabled) Serial.println("CNN shadow: double clap detected; Matter click suppressed.");
+  return;
+#endif
   if (!ready) {
     if (diagnosticsEnabled) Serial.println("Double clap detected; offline, event discarded.");
     return;

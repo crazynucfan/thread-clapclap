@@ -22,3 +22,4 @@ __pycache__/
 *.labels.json
 ClapModel.local.h
 CnnTables.local.h
+CnnBenchmark.local.h

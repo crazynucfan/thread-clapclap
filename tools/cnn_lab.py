@@ -256,7 +256,33 @@ def training_windows(records, seed):
     return np.stack(raw), np.array(labels)
 
 
+ARCHITECTURES = ('flat', 'wide', 'ds-flat', 'ds-gap', 'ds-wide-flat', 'ds-wide-gap',
+                 'ds3-bn-flat', 'ds3-bn-gap')
+
+
 def build_model(tf, architecture='flat'):
+    if architecture not in ARCHITECTURES:
+        raise ValueError('Unknown CNN architecture: ' + architecture)
+    if architecture.startswith(('ds-', 'ds3-')):
+        batch_norm = architecture.startswith('ds3-bn-')
+        channels = ((12, 24, 32, 32) if batch_norm else
+                    (12, 24, 32) if architecture.startswith('ds-wide-') else (8, 16, 24))
+        layers = [tf.keras.layers.Input(shape=(15, 32, 1))]
+        def convolution(layer):
+            layers.append(layer)
+            if batch_norm:
+                layers.extend([tf.keras.layers.BatchNormalization(), tf.keras.layers.ReLU()])
+        convolution(tf.keras.layers.Conv2D(channels[0], 3, strides=2, padding='same',
+            activation=None if batch_norm else 'relu', use_bias=not batch_norm))
+        for index, channel in enumerate(channels[1:]):
+            convolution(tf.keras.layers.DepthwiseConv2D(3, strides=2 if index<2 else 1, padding='same',
+                activation=None if batch_norm else 'relu', use_bias=not batch_norm))
+            convolution(tf.keras.layers.Conv2D(channel, 1,
+                activation=None if batch_norm else 'relu', use_bias=not batch_norm))
+        layers.append(tf.keras.layers.GlobalAveragePooling2D() if architecture.endswith('-gap')
+                      else tf.keras.layers.Flatten())
+        layers.append(tf.keras.layers.Dense(len(CLASSES), activation='softmax'))
+        return tf.keras.Sequential(layers)
     channels = (12, 24, 32) if architecture == 'wide' else (8, 16, 24)
     strides = ((1, 2), (2, 2), (2, 2)) if architecture == 'wide' else ((2, 2),) * 3
     return tf.keras.Sequential([
@@ -306,7 +332,7 @@ def interpreter(tf, model):
     if any(np.issubdtype(tensor['dtype'], np.floating) for tensor in runtime.get_tensor_details()):
         raise ValueError('Export still contains floating-point tensors')
     operators = {op['op_name'] for op in runtime._get_ops_details()} - {'DELEGATE'}
-    if operators - {'CONV_2D', 'RESHAPE', 'FULLY_CONNECTED', 'SOFTMAX'}:
+    if operators - {'CONV_2D', 'DEPTHWISE_CONV_2D', 'MEAN', 'RESHAPE', 'FULLY_CONNECTED', 'SOFTMAX'}:
         raise ValueError('Unexpected model operators: ' + str(operators))
     return runtime, inputs, outputs, sorted(operators)
 
@@ -656,7 +682,7 @@ def main():
     training.add_argument('--epochs', type=int, choices=range(1, 501), default=80)
     training.add_argument('--seed', type=int, default=7)
     training.add_argument('--frontend', choices=('rms', 'preemphasis', 'contrast'), default='rms')
-    training.add_argument('--architecture', choices=('flat', 'wide'), default='flat')
+    training.add_argument('--architecture', choices=ARCHITECTURES, default='flat')
     training.add_argument('--test-role', choices=('held_out', 'diagnostic'), default='held_out',
                           help='use diagnostic if these test recordings have already informed development')
     commands.add_parser('smoke', help='verify synthetic frontend/CNN/INT8 conversion; no saved model')

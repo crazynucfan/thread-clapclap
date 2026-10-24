@@ -496,3 +496,35 @@ Do not include Thread credentials or device storage.
   Private build manifests, firmware, parity results and device logs remain
   under `.local/` and `.build/`. Longer fresh positive/negative trials are still
   needed before claiming a reliable recognition or false-trigger rate.
+
+### 2026-10-24: DS-CNN experiments retained offline
+
+- Saved and verified a dedicated rollback snapshot of the working model,
+  float checkpoint, cutoff, frontend, sources and exact firmware binaries.
+  The existing INT8 model hash remains unchanged. The default flash files were
+  restored to that original image after compiling experimental firmware.
+- Tested six DS-CNN variants using the same recordings, labels, augmentation,
+  frontend, seed and threshold policy. The two-block Flat/GAP models matched
+  18/22 timed diagnostic pairs and produced 1/4 false actions on all existing
+  negative recordings respectively. Wider two-block models matched 19/22 and
+  18/22, each with one false action. Three-block, batch-normalized Flat/GAP
+  variants matched 18/22 each with zero observed false actions. The original
+  standard CNN retained the better 20/22, zero-false-action tradeoff.
+- Kept all weights, actual labels, audio and detailed reports local. Existing
+  group C remains diagnostic; these comparisons do not establish unseen-room
+  performance. Parameter/export-size results are in the CNN experiment guide.
+- Added optional depthwise/mean operator support and a private shadow-only
+  benchmark bank. It compiled for the C6, and synthetic tests verified static
+  INT8 conversion and batch-normalization folding. It was **not flashed**.
+  A normal build using the archived original model/frontend assets also
+  compiled without regenerating the weights.
+  No C6 timing or arena measurements are claimed for the new architectures.
+- The operator disconnected the C6 and requested more negative examples before
+  deploying new networks. The device remains on the prior working firmware.
+  A targeted training-negative session and a separate reserved no-clap session
+  are planned next; the recording plan includes local capture commands.
+- All 101 default checks passed, including saved-image upload selection and
+  hash-mismatch rejection with hardware calls mocked. The optional seven-model
+  synthetic export test also passed. Uploading a saved firmware directory uses
+  `flash --input-dir`, while experimental builds can use a separate output
+  directory to avoid replacing the default flash files.

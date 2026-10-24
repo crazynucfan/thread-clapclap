@@ -11,8 +11,8 @@ as-is under the MIT licence, without warranty or any commitment to maintenance,
 support, or updates. It is experimental and is not a certified Matter product.
 
 **Status:** the current burst-scoring firmware builds with Arduino ESP32
-**3.3.12**. All **99 automated checks** pass: 68 native C++ checks (including
-45 retained legacy checks) and 31 Python checks. Earlier firmware
+**3.3.12**. All **101 automated checks** pass: 68 native C++ checks (including
+45 retained legacy checks) and 33 Python checks. Earlier firmware
 was commissioned into Home Assistant, became a Thread router, and delivered
 physical double-clap events, but subsequent trials frequently missed. A labelled physical pair passed the new classifier and was missed by the old
 one on the same captured frames. A subsequent live pair also delivered a
@@ -314,9 +314,9 @@ your existing Border Router to connect Thread to the Home Assistant LAN.
 python3 tools/project.py test
 ```
 
-The **99 automated checks** retain the original 14 digital and 31 analog
+The **101 automated checks** retain the original 14 digital and 31 analog
 checks, add 17 burst-classifier/protocol, two waveform-protocol and four CNN gesture checks,
-and run thirty-one Python checks for feature/waveform capture integrity,
+and run thirty-three Python checks for feature/waveform capture integrity,
 native replay, privacy guards, binary CNN labels, validation threshold selection,
 attack timestamp association, one-to-one matching, and the proposed host pair rule. Signal fixtures exercise coloured
 claps, FFT alignment, positive onset flux, reverberation, singles/triples,
