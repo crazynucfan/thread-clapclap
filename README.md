@@ -11,8 +11,8 @@ as-is under the MIT licence, without warranty or any commitment to maintenance,
 support, or updates. It is experimental and is not a certified Matter product.
 
 **Status:** the current burst-scoring firmware builds with Arduino ESP32
-**3.3.12**. All **101 automated checks** pass: 68 native C++ checks (including
-45 retained legacy checks) and 33 Python checks. Earlier firmware
+**3.3.12**. All **108 automated checks** pass: 72 native C++ checks (including
+45 retained legacy checks) and 36 Python checks. Earlier firmware
 was commissioned into Home Assistant, became a Thread router, and delivered
 physical double-clap events, but subsequent trials frequently missed. A labelled physical pair passed the new classifier and was missed by the old
 one on the same captured frames. A subsequent live pair also delivered a
@@ -26,6 +26,10 @@ device now runs a private trained CNN. Normal builds use DSP; model weights
 are not shipped in this repository. The guide covers generating private assets,
 checking frontend parity and building CNN firmware. Recordings, labels, reports
 and model artifacts stay under `.local/`.
+
+CNN builds now default to a faster first-pair action: 160–599 ms gaps are
+accepted (including 200–300 ms), and a third clap does not cancel the click.
+The original wait-and-cancel behavior is available with `--pair-policy exact-two`.
 
 ## 1. Connect the hardware
 
@@ -314,9 +318,9 @@ your existing Border Router to connect Thread to the Home Assistant LAN.
 python3 tools/project.py test
 ```
 
-The **101 automated checks** retain the original 14 digital and 31 analog
-checks, add 17 burst-classifier/protocol, two waveform-protocol and four CNN gesture checks,
-and run thirty-three Python checks for feature/waveform capture integrity,
+The **108 automated checks** retain the original 14 digital and 31 analog
+checks, add 17 burst-classifier/protocol, two waveform-protocol and eight CNN gesture checks,
+and run thirty-six Python checks for feature/waveform capture integrity,
 native replay, privacy guards, binary CNN labels, validation threshold selection,
 attack timestamp association, one-to-one matching, and the proposed host pair rule. Signal fixtures exercise coloured
 claps, FFT alignment, positive onset flux, reverberation, singles/triples,

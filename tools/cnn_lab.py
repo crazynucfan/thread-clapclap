@@ -136,8 +136,22 @@ def propose(path, output):
     print('For a verified no-clap recording, set negative_only=true and label proposed sounds; this also supplies background windows.')
 
 
-def dataset(manifest_path):
-    manifest = json.loads(manifest_path.read_text())
+def experiment_manifest(directory):
+    """Prefer the exact training manifest over a mutable sibling manifest."""
+    snapshot = directory / 'manifest.json'
+    return snapshot if snapshot.exists() else directory.parent / 'manifest.json'
+
+
+def save_manifest_snapshot(manifest_path, manifest, destination):
+    snapshot = dict(manifest)
+    snapshot['recordings'] = [dict(entry, annotations=os.path.relpath(
+        (manifest_path.parent / entry['annotations']).resolve(), destination.parent.resolve()))
+        for entry in manifest['recordings']]
+    write_json(destination, snapshot)
+
+
+def dataset(manifest_path, manifest=None):
+    manifest = json.loads(manifest_path.read_text()) if manifest is None else manifest
     if manifest.get('schema') != 1 or not manifest.get('recordings'):
         raise ValueError('Expected schema 1 manifest with recordings')
     groups, seen, recordings = {}, set(), []
@@ -348,26 +362,33 @@ def predict(runtime, inputs, outputs, features):
     return (runtime.get_tensor(outputs['index'])[0].astype(np.float32) - zero) * scale
 
 
-def pair_groups(onsets):
-    """Exactly two counted attacks, 160–599ms apart; a third cancels."""
+PAIR_POLICIES = ('immediate', 'exact-two')
+
+
+def pair_groups(onsets, policy='exact-two'):
+    """160–599ms onset pairs; immediate emits once per burst, exact-two waits."""
+    if policy not in PAIR_POLICIES:
+        raise ValueError('Unknown pair policy: ' + str(policy))
     result, pending = [], []
     last = None
     for now in onsets:
         if last is not None and now - last >= 600:
-            if len(pending) == 2:
+            if policy == 'exact-two' and len(pending) == 2:
                 result.append(pending)
             pending = []
         if last is None or now - last >= 160:
             if len(pending) < 3:
                 pending.append(now)
+                if policy == 'immediate' and len(pending) == 2:
+                    result.append(pending.copy())
             last = now
-    if len(pending) == 2:
+    if policy == 'exact-two' and len(pending) == 2:
         result.append(pending)
     return result
 
 
-def pairs(onsets):
-    return len(pair_groups(onsets))
+def pairs(onsets, policy='exact-two'):
+    return len(pair_groups(onsets, policy))
 
 
 def associate(events, threshold, cluster_ms=120):
@@ -424,7 +445,7 @@ def match_times(detected, expected, tolerance_ms=100):
             'missed_expected': [item for j, item in enumerate(expected) if j not in used_e]}
 
 
-def choose_threshold(positive_scores, negative_scores, negative_streams, positive_streams=()):
+def choose_threshold(positive_scores, negative_scores, negative_streams, positive_streams=(), *, pair_policy='exact-two'):
     """Select a validation operating point for the complete double-clap action.
 
     Window scores are (clap_score, top_class_is_clap). Each separate negative
@@ -440,14 +461,14 @@ def choose_threshold(positive_scores, negative_scores, negative_streams, positiv
     for step in range(128, 257):
         threshold = step / 256
         accepted = [associate(stream, threshold) for stream in negative_streams]
-        false_pairs = sum(pairs(onsets) for onsets in accepted)
+        false_pairs = sum(pairs(onsets, pair_policy) for onsets in accepted)
         stream_matches, stream_total = 0, 0
         for stream in positive_streams:
             detected = associate(stream['scores'], threshold)
             truth = stream['truth']
             stream_matches += len(match_times(detected, truth)['matches'])
             stream_total += len(truth)
-            false_pairs += len(match_times(pair_groups(detected), pair_groups(truth))['unmatched_detected'])
+            false_pairs += len(match_times(pair_groups(detected, pair_policy), pair_groups(truth, pair_policy))['unmatched_detected'])
         if false_pairs:
             continue
         choices.append({
@@ -484,11 +505,11 @@ def score_stream(record, tf, runtime, inputs, outputs, frontend):
     return result
 
 
-def replay(record, scores, threshold):
+def replay(record, scores, threshold, pair_policy='exact-two'):
     accepted = associate(scores, threshold)
-    detected = pair_groups(accepted)
+    detected = pair_groups(accepted, pair_policy)
     truth = [onset * 1000 / RATE for onset, label in sorted(record['events']) if label == 0]
-    expected = pair_groups(truth)
+    expected = pair_groups(truth, pair_policy)
     return {'recording': str(record['path']), 'split': record['split'],
             'negative_only': record['negative_only'], 'duration_s': record['duration_s'],
             'usable_negative_seconds': max(0, record['duration_s'] - 2 - (WINDOW-PRE)/RATE)
@@ -511,8 +532,11 @@ def train(args):
         raise ValueError('Output directory already exists; choose a new experiment name')
     tf = tensorflow()
     tf.keras.utils.set_random_seed(args.seed)
-    records = dataset(args.manifest)
+    manifest_bytes = args.manifest.read_bytes()
+    manifest = json.loads(manifest_bytes)
+    records = dataset(args.manifest, manifest)
     frontend, architecture = getattr(args, 'frontend', 'rms'), getattr(args, 'architecture', 'flat')
+    pair_policy = getattr(args, 'pair_policy', 'immediate')
     arrays, reviewed_counts = {}, {}
     for split in ('train', 'validation', 'test'):
         examples = [(record, onset, label) for record in records if record['split'] == split
@@ -564,7 +588,7 @@ def train(args):
         else:
             positive_streams.append({'scores': stream,
                 'truth': [onset*1000/RATE for onset, label in sorted(record['events']) if label == 0]})
-    operating_point = choose_threshold(positive_scores, negative_scores, negative_streams, positive_streams)
+    operating_point = choose_threshold(positive_scores, negative_scores, negative_streams, positive_streams, pair_policy=pair_policy)
     threshold = operating_point['threshold']
     normalization = {
         'rms': 'window DC removal; scale waveform to RMS 0.1 with denominator floor 1e-5; log mel clipped [-16,4], scaled (log+16)/20',
@@ -572,17 +596,19 @@ def train(args):
         'contrast': 'window DC removal; log mel minus first log-mel frame per band; clip [-8,8], scale (contrast+8)/16',
     }
     spec = dict(SPEC, mode=frontend, normalisation=normalization[frontend])
-    protocol = {'schema': 2, 'seed': args.seed, 'test_role': getattr(args, 'test_role', 'held_out'),
+    destination.mkdir(parents=True)
+    save_manifest_snapshot(args.manifest, manifest, destination / 'manifest.json')
+    protocol = {'schema': 2, 'seed': args.seed, 'test_role': getattr(args, 'test_role', 'held_out'), 'pair_policy': pair_policy,
                 'frontend': spec, 'gate': GATE_SPEC, 'mining_gate': MINING_SPEC,
                 'filter_sos_coefficients': {str(hz): butter(2, hz, fs=RATE, btype='highpass', output='sos').tolist()
                     for hz in (700, 1000)}, 'architecture': architecture,
                 'parameters': model.count_params(), 'threshold': threshold,
                 'validation_operating_point': operating_point, 'model_sha256': hashlib.sha256(converted).hexdigest(),
-                'manifest_sha256': wave_lab.digest(args.manifest), 'trainer_sha256': trainer_sha256,
+                'manifest_sha256': hashlib.sha256(manifest_bytes).hexdigest(),
+                'manifest_snapshot_sha256': wave_lab.digest(destination / 'manifest.json'), 'trainer_sha256': trainer_sha256,
                 'recordings': [{'sha256': r['sha256'], 'split': r['split'], 'group': r['group'],
                     'events_sha256': hashlib.sha256(json.dumps(sorted(r['events'])).encode()).hexdigest()}
                     for r in records]}
-    destination.mkdir(parents=True)
     # Persist the complete operating point before the first test prediction.
     write_json(destination / 'selection-frozen.json', protocol)
     (destination / 'clap.tflite').write_bytes(converted)
@@ -604,7 +630,7 @@ def train(args):
         key = str(record['path'])
         if key not in streams:
             streams[key] = score_stream(record, tf, runtime, inputs, outputs, frontend)
-        row = replay(record, streams[key], threshold)
+        row = replay(record, streams[key], threshold, pair_policy)
         replay_rows.append(row)
     write_json(destination / 'replay.json', {'protocol': protocol, 'records': replay_rows,
         'scores': streams, 'timing_tolerance_ms': 100,
@@ -648,6 +674,45 @@ def train(args):
     print(json.dumps(report, indent=2))
 
 
+def evaluate(args):
+    """Evaluate a frozen model/cutoff; never fit or select with these recordings."""
+    destination = wave_lab.private_path(args.output)
+    if destination.exists():
+        raise ValueError('Evaluation output already exists; choose a new filename')
+    source = json.loads((args.experiment / 'report.json').read_text())
+    blob = (args.experiment / 'clap.tflite').read_bytes()
+    if hashlib.sha256(blob).hexdigest() != source['model_sha256']:
+        raise ValueError('Model does not match its report')
+    if (source['classes'] != list(CLASSES) or source['gate'] != GATE_SPEC
+            or source['frontend'].get('mode') not in ('rms','preemphasis','contrast')
+            or any(source['frontend'].get(key) != value for key, value in SPEC.items() if key != 'normalisation')):
+        raise ValueError('Evaluation requires the current binary frontend and gate')
+    records = dataset(args.manifest)
+    if any(record['split'] != 'test' for record in records):
+        raise ValueError('Evaluation-only manifest must contain test recordings only')
+    known = {record['sha256'] for record in source['recordings']}
+    if args.test_role == 'held_out' and any(record['sha256'] in known for record in records):
+        raise ValueError('These recordings already appear in the model experiment; evaluate them as diagnostic')
+    policy = args.pair_policy or source.get('pair_policy', 'exact-two')
+    tf = tensorflow()
+    runtime, inputs, outputs, _ = interpreter(tf, blob)
+    rows, streams = [], {}
+    for record in records:
+        scores = score_stream(record, tf, runtime, inputs, outputs, source['frontend']['mode'])
+        streams[str(record['path'])] = scores
+        rows.append(replay(record, scores, source['threshold'], policy))
+    seconds = sum(row['usable_negative_seconds'] for row in rows)
+    false_actions = sum(row['recognized_pairs'] for row in rows if row['negative_only'])
+    report = {'schema': 1, 'evaluation_only': True, 'test_role': args.test_role,
+        'model_sha256': source['model_sha256'], 'threshold': source['threshold'], 'pair_policy': policy,
+        'selection_report_sha256': wave_lab.digest(args.experiment / 'report.json'),
+        'manifest_sha256': wave_lab.digest(args.manifest), 'negative_seconds': seconds,
+        'false_activations': false_actions, 'records': rows, 'scores': streams,
+        'model_selection': 'Frozen weights and cutoff; these recordings do not select either.'}
+    write_json(destination, report)
+    print(json.dumps({key: value for key, value in report.items() if key not in ('records','scores')}, indent=2))
+
+
 def smoke():
     """Synthetic plumbing check, never an accuracy benchmark or shipped model."""
     import numpy as np
@@ -683,12 +748,20 @@ def main():
     training.add_argument('--seed', type=int, default=7)
     training.add_argument('--frontend', choices=('rms', 'preemphasis', 'contrast'), default='rms')
     training.add_argument('--architecture', choices=ARCHITECTURES, default='flat')
+    training.add_argument('--pair-policy', choices=PAIR_POLICIES, default='immediate')
     training.add_argument('--test-role', choices=('held_out', 'diagnostic'), default='held_out',
                           help='use diagnostic if these test recordings have already informed development')
+    evaluation = commands.add_parser('evaluate', help='evaluate one frozen model/cutoff without training')
+    evaluation.add_argument('experiment', type=Path)
+    evaluation.add_argument('manifest', type=Path)
+    evaluation.add_argument('--output', type=Path, required=True)
+    evaluation.add_argument('--pair-policy', choices=PAIR_POLICIES)
+    evaluation.add_argument('--test-role', choices=('held_out','diagnostic'), default='held_out')
     commands.add_parser('smoke', help='verify synthetic frontend/CNN/INT8 conversion; no saved model')
     args = parser.parse_args()
     if args.command == 'propose': propose(args.recording, args.output)
     elif args.command == 'train': train(args)
+    elif args.command == 'evaluate': evaluate(args)
     else: smoke()
 
 

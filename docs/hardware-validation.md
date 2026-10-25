@@ -528,3 +528,31 @@ Do not include Thread credentials or device storage.
   synthetic export test also passed. Uploading a saved firmware directory uses
   `flash --input-dir`, while experimental builds can use a separate output
   directory to avoid replacing the default flash files.
+
+### 2026-10-25: faster first-pair behavior trial
+
+- Retained the original working CNN weights and cutoff, with the original exact
+  firmware image still preserved for rollback. Installed a timing-only build
+  that emits after the second classified association cluster, without waiting
+  600 ms for a third clap to be absent. Longer bursts emit once and rearm after
+  600 ms quiet. The existing 160–599 ms onset range includes 200–300 ms pairs.
+- Kept legacy exact-two behavior selectable in native/host evaluation and
+  firmware builds. New training defaults to the immediate policy, so cutoff
+  selection and false-action evaluation match the intended device behavior.
+- Full native replay under the immediate policy retained 20/22 timed diagnostic
+  pair matches, with zero changed classifier decisions and zero actions in all
+  existing negative recordings. These remain previously inspected diagnostics.
+- The timing-only firmware built successfully and was flashed with pairing
+  retained. Device status confirmed the original model hash, immediate policy,
+  shadow mode off, a Thread router connection, and zero queue/DMA drops during
+  observation. Faster-pair physical feedback is pending; no new audio/model
+  training result is claimed yet.
+- Added experiment-local manifest snapshots and evaluation of frozen weights
+  and cutoffs on separate test-only manifests. The evaluator rejects a fresh
+  held-out label for recordings already present in the model experiment. This
+  supports new training impacts/background alongside existing data while
+  reserving separate impacts/background for the final evaluation.
+- All 108 default checks passed, including immediate 200/250/300 ms timing,
+  one action per burst, legacy behavior and manifest relocation. The synthetic
+  train/export/evaluate/C-header integration also passed. Data and models stay
+  under ignored local storage; new negative recording collection is prepared.

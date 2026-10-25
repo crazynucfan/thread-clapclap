@@ -14,6 +14,9 @@
 #ifndef CLAP_CNN_SHADOW
 #define CLAP_CNN_SHADOW 0
 #endif
+#ifndef CLAP_CNN_IMMEDIATE_PAIR
+#define CLAP_CNN_IMMEDIATE_PAIR 1
+#endif
 #if CLAP_CNN_SHADOW && __has_include("CnnBenchmark.local.h")
 #include "CnnBenchmark.local.h"
 #define CLAP_HAS_CNN_BENCHMARK_BANK 1
@@ -96,13 +99,14 @@ class CnnDetector {
     return gesture_.advance(stream_.watermark());
   }
   void status(uint32_t dmaOverflows,uint32_t acquisitionUs) const {
-    Serial.printf("CNN status: classified=%lu accepted_candidates=%lu proposals=%lu queue=%u peak_queue=%u queue_drops=%lu dma_overflows=%lu max_frontend_us=%lu max_inference_us=%lu max_service_us=%lu max_acquisition_batch_us=%lu arena_used=%u free_8bit=%u largest_8bit=%u failed=%u model=%s architecture=%s shadow=%u benchmark_min_us=%lu benchmark_median_us=%lu benchmark_max_us=%lu\n",
+    Serial.printf("CNN status: classified=%lu accepted_candidates=%lu proposals=%lu queue=%u peak_queue=%u queue_drops=%lu dma_overflows=%lu max_frontend_us=%lu max_inference_us=%lu max_service_us=%lu max_acquisition_batch_us=%lu arena_used=%u free_8bit=%u largest_8bit=%u failed=%u model=%s architecture=%s shadow=%u benchmark_min_us=%lu benchmark_median_us=%lu benchmark_max_us=%lu pair_policy=%s min_gap_ms=160 max_gap_ms=599\n",
         static_cast<unsigned long>(classified_),static_cast<unsigned long>(accepted_),static_cast<unsigned long>(stream_.proposals()),
         stream_.queued(),stream_.peakQueue(),static_cast<unsigned long>(stream_.drops()),static_cast<unsigned long>(dmaOverflows),
         static_cast<unsigned long>(maxFrontendUs_),static_cast<unsigned long>(maxInferenceUs_),static_cast<unsigned long>(maxServiceUs_),static_cast<unsigned long>(acquisitionUs),
         static_cast<unsigned>(interpreter_->arena_used_bytes()),static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_8BIT)),
         static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)),failed_,clapModelSha256,CLAP_MODEL_ARCHITECTURE,CLAP_CNN_SHADOW,
-        static_cast<unsigned long>(benchmarkMinUs_),static_cast<unsigned long>(benchmarkMedianUs_),static_cast<unsigned long>(benchmarkMaxUs_));
+        static_cast<unsigned long>(benchmarkMinUs_),static_cast<unsigned long>(benchmarkMedianUs_),static_cast<unsigned long>(benchmarkMaxUs_),
+        CLAP_CNN_IMMEDIATE_PAIR?"immediate":"exact-two");
 #if defined(CLAP_HAS_CNN_BENCHMARK_BANK)
     Serial.printf("CNN BENCH: architecture=%s model=%s iterations=31 min_us=%lu median_us=%lu max_us=%lu arena_used=%u shadow=1\n",
         CLAP_MODEL_ARCHITECTURE,clapModelSha256,static_cast<unsigned long>(benchmarkMinUs_),static_cast<unsigned long>(benchmarkMedianUs_),
@@ -162,7 +166,8 @@ class CnnDetector {
   tflite::MicroInterpreter *interpreter_=nullptr;
   TfLiteTensor *input_=nullptr,*output_=nullptr;
   uint8_t *arena_=nullptr;
-  CnnStream stream_;CnnFeatures features_;CnnGesture gesture_{clapModelThreshold};
+  CnnStream stream_;CnnFeatures features_;
+  CnnGesture gesture_{clapModelThreshold,CLAP_CNN_IMMEDIATE_PAIR?CnnGesture::Policy::Immediate:CnnGesture::Policy::ExactTwo};
   float raw_[2048]{};
   uint32_t classified_=0,accepted_=0,maxFrontendUs_=0,maxInferenceUs_=0,maxServiceUs_=0,lastInferenceUs_=0;
   uint32_t benchmarkMinUs_=0,benchmarkMedianUs_=0,benchmarkMaxUs_=0;

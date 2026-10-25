@@ -90,10 +90,27 @@ def main():
         frozen = json.loads((output / 'selection-frozen.json').read_text())
         assert frozen['model_sha256'] == report['model_sha256']
         assert frozen['threshold'] == report['threshold']
+        assert report['pair_policy'] == 'immediate'
+        assert len(cnn.dataset(cnn.experiment_manifest(output))) == 6
         replay = json.loads((output / 'replay.json').read_text())
         assert len(replay['records']) == 5  # train negative + all validation/test
         assert all('pair_matching' in record for record in replay['records'])
         assert np.asarray(report['test_confusion_rows_actual']).shape == (2, 2)
+        evaluation_manifest=directory/'evaluation.json'
+        evaluation_manifest.write_text(json.dumps({'schema':1,'recordings':[entry for entry in entries if entry['split']=='test']}))
+        evaluation_args=argparse.Namespace(experiment=output,manifest=evaluation_manifest,
+            output=directory/'evaluation-report.json',pair_policy=None,test_role='held_out')
+        try: cnn.evaluate(evaluation_args)
+        except ValueError as error: assert 'already appear' in str(error)
+        else: raise AssertionError('already-inspected test audio was accepted as fresh held-out data')
+        before_model=wave_lab.digest(output/'clap.tflite');before_report=wave_lab.digest(output/'report.json')
+        evaluation_args.test_role='diagnostic'
+        cnn.evaluate(evaluation_args)
+        evaluation=json.loads(evaluation_args.output.read_text())
+        assert evaluation['evaluation_only'] and evaluation['pair_policy']=='immediate'
+        assert evaluation['false_activations']==report['test_false_activations']
+        assert wave_lab.digest(output/'clap.tflite')==before_model
+        assert wave_lab.digest(output/'report.json')==before_report
         source = directory / 'header.cpp'
         source.write_text('#include "' + str(output / 'ClapModel.local.h') + '"\n'
                           'static_assert(clapModelLength == ' + str(report['model_bytes']) + ');\nint main(){}\n')

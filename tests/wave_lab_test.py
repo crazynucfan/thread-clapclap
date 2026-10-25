@@ -196,6 +196,31 @@ class WaveTests(unittest.TestCase):
         self.assertEqual(cnn.pairs([2000, 2600]), 0)
         self.assertEqual(cnn.pairs([2000, 2300, 3500, 3800]), 2)
 
+    def test_immediate_pair_rule_emits_once_for_longer_burst(self):
+        self.assertEqual(cnn.pair_groups([2000,2200,2400,2600,4000,4250], 'immediate'),
+                         [[2000,2200],[4000,4250]])
+        for gap in (160,200,250,300,599):
+            self.assertEqual(cnn.pairs([2000,2000+gap], 'immediate'),1)
+        for gap in (159,600):
+            self.assertEqual(cnn.pairs([2000,2000+gap], 'immediate'),0)
+
+    def test_immediate_threshold_selection_counts_triples_as_actions(self):
+        result=cnn.choose_threshold([(0.95,True)],[(0.8,True)],
+            [[(2000,.8,True),(2250,.8,True),(2500,.8,True)]],pair_policy='immediate')
+        self.assertGreater(result['threshold'],.8)
+        self.assertEqual(result['false_pairs'],0)
+
+    def test_manifest_snapshot_preserves_annotation_locations_and_input(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);output=root/'experiment'/'manifest.json'
+            original={'schema':1,'recordings':[{'annotations':'labels/session.json','split':'train'}]}
+            cnn.save_manifest_snapshot(root/'manifest.json',original,output)
+            snapshot=json.loads(output.read_text())
+            self.assertEqual((output.parent/snapshot['recordings'][0]['annotations']).resolve(),
+                             (root/'labels/session.json').resolve())
+            self.assertEqual(original['recordings'][0]['annotations'],'labels/session.json')
+            self.assertEqual(cnn.experiment_manifest(output.parent),output)
+
     def test_association_uses_attack_time_when_early_window_sees_future_clap(self):
         events = [(2580, .99, True, .1), (2814, .99, True, .01),
                   (2876, .99, True, .2), (2924, .98, True, .02),

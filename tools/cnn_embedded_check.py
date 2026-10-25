@@ -11,6 +11,7 @@ import wave_lab
 def main():
  p=argparse.ArgumentParser(description=__doc__);p.add_argument('experiment',type=Path);p.add_argument('--assets',type=Path,required=True);p.add_argument('--output',type=Path,required=True)
  p.add_argument('--allow-known-errors',action='store_true',help='experimental parity check only; retain known false actions instead of requiring zero')
+ p.add_argument('--pair-policy',choices=cnn.PAIR_POLICIES,help='override the recorded pair policy for a behavior-only trial')
  a=p.parse_args()
  wave_lab.private_path(a.output)
  binary=a.assets/'frontend-replay'
@@ -19,9 +20,11 @@ def main():
  subprocess.run(['g++','-std=c++17','-O2','-Wall','-Wextra','-Werror','-pedantic',str(ROOT/'tools/cnn_gesture_replay.cpp'),'-o',str(gesture_binary)],check=True)
  tf=cnn.tensorflow();blob=(a.experiment/'clap.tflite').read_bytes();rt,inp,out,_=cnn.interpreter(tf,blob)
  report=json.loads((a.experiment/'report.json').read_text());threshold=report['threshold'];rows=[]
- reference_rows={r['recording']:r for r in json.loads((a.experiment/'replay.json').read_text())['records']}
+ reference_replay=json.loads((a.experiment/'replay.json').read_text())
+ reference_rows={r['recording']:r for r in reference_replay['records']}
+ pair_policy=a.pair_policy or report.get('pair_policy','exact-two')
  dtype=np.dtype([('onset','<u8'),('strength','<f8'),('features','i1',(480,))])
- for r in cnn.dataset(a.experiment.parent/'manifest.json'):
+ for r in cnn.dataset(cnn.experiment_manifest(a.experiment)):
   if r['split']=='train' and not r['negative_only']:continue
   _,pcm=wave_lab.load_wave(r['path']);adc=(np.asarray(pcm,dtype=np.int32)//16+2048).astype('<u2')
   result=subprocess.run([str(binary)],input=adc.tobytes(),capture_output=True,check=True)
@@ -37,19 +40,20 @@ def main():
    original=cnn.predict(rt,inp,out,feature);max_score_delta=max(max_score_delta,float(np.max(np.abs(original-score))))
    decisions_changed+=bool((score[0]>=score[1] and score[0]>=threshold)!=(original[0]>=original[1] and original[0]>=threshold))
    streams.append((int(event['onset'])*1000/cnn.RATE,float(score[0]),bool(score[0]>=score[1]),float(event['strength'])))
-  row=cnn.replay(r,streams,threshold);row.update(max_input_delta=max_delta,changed_input_values=changed,input_values=int(delta.size),max_score_delta=max_score_delta,changed_candidate_decisions=decisions_changed)
+  row=cnn.replay(r,streams,threshold,pair_policy);row.update(max_input_delta=max_delta,changed_input_values=changed,input_values=int(delta.size),max_score_delta=max_score_delta,changed_candidate_decisions=decisions_changed)
   packed=b''.join(struct.pack('<QfBd',int(onset*8),score,top,strength) for onset,score,top,strength in streams)
-  actions=int(subprocess.run([str(gesture_binary),str(threshold)],input=packed,capture_output=True,check=True).stdout)
+  actions=int(subprocess.run([str(gesture_binary),str(threshold),pair_policy],input=packed,capture_output=True,check=True).stdout)
   assert actions==row['recognized_pairs'],(r['path'].name,'embedded gesture rule mismatch')
   row['embedded_gesture_actions']=actions
   rows.append(row);print('PARITY',r['path'].name,'candidates',len(onsets),'input_delta',max_delta,'changed',changed,'score_delta',max_score_delta,'decisions_changed',decisions_changed,'pairs',row['recognized_pairs'],flush=True)
   assert decisions_changed==0,(r['path'].name,'classifier decisions changed')
   if r['negative_only'] and not a.allow_known_errors:assert row['recognized_pairs']==0
-  baseline=reference_rows[str(r['path'])]
+  baseline=(reference_rows[str(r['path'])] if pair_policy==report.get('pair_policy','exact-two') else
+      cnn.replay(r,reference_replay['scores'][str(r['path'])],threshold,pair_policy))
   assert row['recognized_pairs']==baseline['recognized_pairs']
   assert len(row['pair_matching']['matches'])==len(baseline['pair_matching']['matches'])
   assert row['pair_matching']['missed_expected']==baseline['pair_matching']['missed_expected']
- a.output.write_text(json.dumps({'schema':1,'model_sha256':report['model_sha256'],'experimental_only':a.allow_known_errors,'scope':'native C++ arithmetic and full-record replay; on-device runtime still requires its self-test and resource measurements','records':rows},indent=2)+'\n')
+ a.output.write_text(json.dumps({'schema':1,'model_sha256':report['model_sha256'],'pair_policy':pair_policy,'experimental_only':a.allow_known_errors,'scope':'native C++ arithmetic and full-record replay; on-device runtime still requires its self-test and resource measurements','records':rows},indent=2)+'\n')
  print('PASS embedded C++ frontend parity and complete diagnostic replay')
 
 if __name__=='__main__':main()

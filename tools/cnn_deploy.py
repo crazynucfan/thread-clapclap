@@ -72,7 +72,7 @@ def generate(experiment, destination, benchmarks=()):
     scale,zero=inp['quantization'];quant=np.clip(np.floor(feature/scale+zero+.5),-128,127).astype(np.int8)
     score=cnn.predict(rt,inp,out,feature)
     # One reviewed positive feature checks model execution, without shipping raw audio.
-    manifest=experiment.parent/'manifest.json'
+    manifest=cnn.experiment_manifest(experiment)
     records=cnn.dataset(manifest)
     record=next(r for r in records if r['split']=='train' and not r['negative_only'])
     onset=next(o for o,l in record['events'] if l==0)
@@ -121,6 +121,7 @@ def generate(experiment, destination, benchmarks=()):
     (destination/'deployment.json').write_text(json.dumps({'schema':1,'experiment':str(experiment.resolve()),
         'model_sha256':report['model_sha256'],'threshold':report['threshold'],'test_role':report['test_role'],
         'architecture':report['architecture'],'operators':operators,
+        'selection_pair_policy':report.get('pair_policy','exact-two'),
         'benchmark_models':benchmark_metadata,
         'generator_sha256':hashlib.sha256(Path(__file__).read_bytes()).hexdigest()},indent=2)+'\n')
     print(f'Generated private model and frontend tables in {destination}')

@@ -212,8 +212,10 @@ and full-recording **host-reference** false double-clap activations per hour.
 It also reports a Poisson upper bound when no false event was observed; that
 bound assumes stationary events and does not establish room reliability.
 Positive pair counts come from reviewed clap annotations. Missing annotations
-make those comparisons unreliable. The proposed pair rule requires exactly
-two claps 160–599 ms apart, with a third cancelling the sequence.
+make those comparisons unreliable. New runs default to `--pair-policy immediate`:
+the first two distinct claps 160–599 ms apart generate one action, with further
+claps ignored until a 600 ms quiet gap. `--pair-policy exact-two` retains the
+original wait-and-cancel-third behavior for historical comparisons.
 
 Do not interpret a high class accuracy with low clap recall, or a threshold
 that rejects all claps, as success. Do not repeatedly tune against the final
@@ -305,10 +307,50 @@ prepared bank compiled, but was not flashed while the device was disconnected
 and collection was deferred. Collect the additional negatives and review the
 new results before running it on the board.
 
-The small delay after a pair is primarily the 600 ms wait to reject a third
-clap, plus completion of the 224 ms post-trigger context. Typical processing
-adds about 26 ms. The DS-CNN experiment preserves that pair rule and window;
-reducing network arithmetic alone cannot remove the deliberate wait.
+The original delay after a pair was primarily the 600 ms wait to reject a third
+clap, plus completion of the 224 ms post-trigger context. The DS-CNN comparisons
+above used that original policy. Reducing network arithmetic alone cannot
+remove the deliberate wait.
+
+## Faster first-pair trial and the next data run
+
+The timing-only trial keeps the original working weights and cutoff. It emits
+after the second clap's 120 ms association cluster is classified, without the
+600 ms third-clap-absence wait. Additional claps in that burst do not cancel or
+repeat the action; a 600 ms quiet gap rearms it. The 160–599 ms onset range
+already includes 200–300 ms pairs. The 256 ms window and duplicate-window
+association still apply, so response is faster rather than instantaneous.
+
+Both policies remain available in firmware builds and host training/evaluation.
+For a legacy behavior build, pass `build --pair-policy exact-two`; normal CNN
+builds use `immediate`. Legacy experiment reports without a policy field are
+interpreted as `exact-two`. Current build manifests record the actual firmware
+policy separately from the policy that originally selected the model cutoff.
+
+The original model's full native replay retained 20/22 timed diagnostic pairs
+and zero actions in all existing negative recordings under the immediate rule.
+Unit tests cover 200/250/300 ms pairs, boundary gaps, one action per longer burst,
+and firing after association instead of waiting for quiet.
+
+For the next run, add the new training impacts and background to the existing
+training recordings. Keep new held-out impacts/background in a separate
+evaluation-only manifest until a model and cutoff have been chosen. Training
+now saves an experiment-local manifest snapshot, so deployment and replay use
+the exact intended dataset instead of a subsequently edited sibling manifest.
+
+Evaluate a frozen candidate on the new reserved recordings without fitting or
+threshold selection:
+
+```sh
+.local/cnn-venv/bin/python tools/cnn_lab.py evaluate \
+  .local/cnn/experiment-06 .local/cnn/manifest-heldout-20261025.json \
+  --pair-policy immediate --output .local/cnn/experiment-06/new-negatives-heldout.json
+```
+
+The evaluator verifies the model hash and rejects a `held_out` label for source
+recordings already present in the model's experiment. Use `--test-role diagnostic`
+when intentionally replaying previously inspected audio. All actual recording
+manifests, annotations, outputs and model artifacts remain private.
 
 ## Build and deploy a private model
 
