@@ -545,8 +545,8 @@ Do not include Thread credentials or device storage.
 - The timing-only firmware built successfully and was flashed with pairing
   retained. Device status confirmed the original model hash, immediate policy,
   shadow mode off, a Thread router connection, and zero queue/DMA drops during
-  observation. Faster-pair physical feedback is pending; no new audio/model
-  training result is claimed yet.
+  observation. The operator completed the faster-pair trial and reported “much
+  better.”
 - Added experiment-local manifest snapshots and evaluation of frozen weights
   and cutoffs on separate test-only manifests. The evaluator rejects a fresh
   held-out label for recordings already present in the model experiment. This
@@ -556,3 +556,29 @@ Do not include Thread credentials or device storage.
   one action per burst, legacy behavior and manifest relocation. The synthetic
   train/export/evaluate/C-header integration also passed. Data and models stay
   under ignored local storage; new negative recording collection is prepared.
+
+### 2026-10-25: additional negatives and frozen held-out comparison
+
+- Collected nine minutes of new training negatives: three minutes of varied
+  impacts, one minute of wardrobe doors and five minutes of room background.
+  Combined these with the original training recordings, retaining the original
+  validation split and treating the previously inspected positive test as
+  diagnostic. Kept loud/clipped impacts as real negative examples.
+- Compared eight new runs: a standard CNN retrain, three DS-CNN variants,
+  two standard-CNN runs with training-only hard-negative refinement, and two
+  gentle fine-tunes starting from the working float checkpoint. No candidate
+  improved on the working model's 20/22 timed diagnostic pair matches with
+  zero observed negative actions. The strongest clean retrains matched 19/22.
+- Froze the unchanged working model and one fine-tuned standard-CNN challenger,
+  including their cutoffs and hashes, before evaluating two separate reserved
+  recordings: three minutes of thuds/object/wardrobe activity and five minutes
+  of ordinary background with occasional thuds. Neither recording was used
+  for training, early stopping, cutoff choice or candidate selection.
+- Both models produced zero double-clap actions over 475.552 usable negative
+  seconds. The working model accepted 15 isolated noise transients, versus 12
+  for the challenger; none formed an activating pair. Eight minutes of this
+  activity is limited evidence, not a long-term false-trigger-rate guarantee.
+- Retained the original model and installed faster-response firmware. No new
+  model was flashed. Verified that the working model still matches its saved
+  rollback copy. Audio, labels, checkpoints, model weights, training adapters
+  and detailed comparison/evaluation reports remain ignored local artifacts.

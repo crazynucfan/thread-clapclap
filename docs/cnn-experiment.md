@@ -352,6 +352,24 @@ recordings already present in the model's experiment. Use `--test-role diagnosti
 when intentionally replaying previously inspected audio. All actual recording
 manifests, annotations, outputs and model artifacts remain private.
 
+The additional negative run on 2026-10-25 used nine minutes of new training
+impacts, wardrobe doors and background alongside the original training data.
+Eight new runs included standard and DS-CNN retrains, training-only hard-negative
+refinement, and fine-tuning from the working standard CNN. None improved its
+20/22 timed diagnostic pair matches with zero observed negative actions; the
+strongest clean challengers matched 19/22. The installed faster-response model
+therefore remains unchanged.
+
+Before opening the new reserved recordings, the working model and one
+fine-tuned standard-CNN challenger were frozen with their cutoffs. Both produced
+zero double-clap actions across three minutes of reserved impact/wardrobe
+activity and five minutes of reserved background (475.552 usable seconds).
+They accepted 15 and 12 isolated noise transients respectively. These recordings
+were not used to tune either model. They now provide a recorded final evaluation
+for this comparison; future changes developed using their results need another
+fresh evaluation set. This short negative trial does not establish long-term
+reliability or add fresh positive recognition evidence.
+
 ## Build and deploy a private model
 
 Use the RMS frontend and a supported architecture. The current working export
