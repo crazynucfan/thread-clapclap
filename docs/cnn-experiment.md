@@ -370,6 +370,29 @@ for this comparison; future changes developed using their results need another
 fresh evaluation set. This short negative trial does not establish long-term
 reliability or add fresh positive recognition evidence.
 
+A subsequent podcast-specific run kept the standard architecture and frontend,
+using the previously reserved negatives as additional training data alongside
+the new podcast clip. The operator clarified that the initial two seconds were
+not consistently quiet. Replay retains those actual starts for noise calibration
+and excludes the same initial two seconds from scoring; no silence was inserted.
+
+Before opening a separate podcast excerpt, froze the original model, a refined
+fine-tune and a conservative scratch retrain. The conservative option was added
+before any predictions on that excerpt because the operator explicitly prefers
+fewer false actions even at the cost of missed claps.
+
+| Model | False actions in fresh podcast excerpt | Accepted noise clusters | Previously inspected diagnostic clap pairs |
+|---|---:|---:|---:|
+| Original working CNN | 1 | 20 | 20/22 |
+| Refined fine-tune, same architecture | 0 | 9 | 19/22 |
+| Conservative retrain, same architecture | 0 | 1 | 17/22 |
+
+The fresh excerpt supplies 177.776 usable negative seconds. These results favor
+trying the conservative option for this preference, while explicitly accepting
+lower observed clap recall. Neither replacement has been flashed. All model
+cutoffs were fixed before the fresh comparison; its audio is excluded from
+training. Longer real-use observation and fresh positive trials remain needed.
+
 ## Build and deploy a private model
 
 Use the RMS frontend and a supported architecture. The current working export

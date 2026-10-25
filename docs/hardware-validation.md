@@ -582,3 +582,41 @@ Do not include Thread credentials or device storage.
   model was flashed. Verified that the working model still matches its saved
   rollback copy. Audio, labels, checkpoints, model weights, training adapters
   and detailed comparison/evaluation reports remain ignored local artifacts.
+
+### 2026-10-25: podcast failure captured and conservative retrain prepared
+
+- The operator reported repeated unwanted lamp actions during a podcast.
+  Captured three minutes for training and another three-minute excerpt for a
+  reserved comparison. Both transfers were complete with zero CRC errors.
+  The operator clarified that quiet first-two-second starts were inconsistent
+  across the collected recordings. Retained the actual starts for gate
+  calibration and the existing two-second exclusion; negative content labels
+  remain valid. Do not assume protocol compliance for individual files.
+- Combined the original training recordings with all new training negatives,
+  including the formerly reserved impact/background recordings. The original
+  validation group remains separate; the previously inspected clap test remains
+  diagnostic. The former reserved negatives are now training data and supply
+  no independent evidence for these new models.
+- Kept the standard 5,114-parameter CNN, RMS/log-mel frontend and immediate-pair
+  behavior. Compared a new scratch retrain, two fine-tunes from the working
+  checkpoint and two training-only hard-negative refinements. All actual
+  annotations, manifests, training adapters and model artifacts remain local.
+- The first podcast clip did not reproduce an activating pair under the original
+  model, although it accepted 20 isolated sound clusters. Native C++ replay
+  matched those decisions. The operator then explicitly prioritized avoiding
+  false actions over dependable clap recall. Before predicting on the second
+  clip, declared a comparison of the original model, the refined fine-tune and
+  the more conservative scratch retrain, with all weights and cutoffs frozen.
+- On the separate podcast excerpt (177.776 usable seconds), the original model
+  produced one false double-clap action and accepted 20 noise clusters.
+  The fine-tuned candidate produced zero actions and accepted nine clusters.
+  The conservative candidate produced zero actions and accepted one cluster.
+  Their previously inspected diagnostic clap matches were 20/22, 19/22 and
+  17/22 respectively. This short comparison supports a conservative trial;
+  it does not establish elimination of false actions in ordinary use.
+- Prepared the conservative model for a device trial. The original working
+  weights, installed timing-only firmware and rollback image are preserved.
+  Native C++ frontend/gesture replay passed on the development recordings and
+  fresh excerpt, retaining both models' action outcomes. An isolated C6 firmware
+  build passed with the immediate policy and shadow mode off. No new model has
+  been flashed at this point.
