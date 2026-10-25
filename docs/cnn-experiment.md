@@ -287,9 +287,9 @@ with batch normalization folded into the exported integer convolutions.
 These are development diagnostics, not a new held-out accuracy estimate.
 Negative exposure includes training audio. Fewer parameters did not guarantee
 a smaller file: extra graph and quantization metadata increased the three-block
-exports. None earned replacement of the working model. The C6 remains on its
-original firmware; more negative recordings are required before deploying new
-networks. The next collection is described in the recording plan.
+exports. None earned replacement of the working model in that comparison.
+The C6 initially retained its original firmware pending more negatives; the
+subsequent collection and conservative-model trial are described below.
 
 `--architecture` also accepts `ds-flat`, `ds-gap`, `ds-wide-flat`, `ds-wide-gap`,
 `ds3-bn-flat` and `ds3-bn-gap`. Synthetic export checks cover depthwise kernels,
@@ -358,7 +358,7 @@ Eight new runs included standard and DS-CNN retrains, training-only hard-negativ
 refinement, and fine-tuning from the working standard CNN. None improved its
 20/22 timed diagnostic pair matches with zero observed negative actions; the
 strongest clean challengers matched 19/22. The installed faster-response model
-therefore remains unchanged.
+was retained at that stage.
 
 Before opening the new reserved recordings, the working model and one
 fine-tuned standard-CNN challenger were frozen with their cutoffs. Both produced
@@ -389,9 +389,27 @@ fewer false actions even at the cost of missed claps.
 
 The fresh excerpt supplies 177.776 usable negative seconds. These results favor
 trying the conservative option for this preference, while explicitly accepting
-lower observed clap recall. Neither replacement has been flashed. All model
-cutoffs were fixed before the fresh comparison; its audio is excluded from
-training. Longer real-use observation and fresh positive trials remain needed.
+lower observed clap recall. All model cutoffs were fixed before the fresh
+comparison; its audio is excluded from training.
+
+The operator authorized the conservative trial, and that model is now installed
+with the same immediate-pair behavior. Upload verification and startup frontend
+and inference self-tests passed. Matter commissioning was retained and Thread
+rejoined as a router. Five physical double-clap attempts generated five Matter
+clicks; the operator confirmed all five toggled the lamps. The podcast was paused
+during those attempts. The original faster-response image and original exact-two
+image both remain available for rollback. Longer real-use observation is needed.
+
+After the operator confirmed podcast playback, a separate 180.7-second live
+interval produced zero additional Matter clicks, with no queue drops or DMA
+overflows. Earlier paused time was excluded. Diagnostics were then disabled,
+the USB monitor closed, and the conservative model left running. This brief
+positive/negative trial does not establish long-term reliability.
+
+To restore the original model while retaining the faster response, flash the
+saved image with `flash --input-dir .local/deployment/immediate-trial-firmware`
+and the connected `--port`. The older rollback snapshot restores the original
+exact-two timing as well as the original model.
 
 ## Build and deploy a private model
 
@@ -438,9 +456,9 @@ scores and Matter events; `LOG OFF` disables it. `MEMORY` reports heap headroom.
 `WAVE_CAPTURE` still suppresses actions. Legacy `CAPTURE` evaluates the DSP
 feature path and retains its existing replay fingerprint, even in a CNN build.
 
-The current build uses approximately 2.783 MB of the 3 MiB app partition and
+The conservative build uses approximately 2.802 MB of the 3 MiB app partition and
 197 KB of static RAM. Live checks measured about 99 KB free heap, with an
-84.8 KB minimum, while commissioned and connected as a Thread router. Dense
+83.3 KB minimum, while commissioned and connected as a Thread router. Dense
 background processing completed with zero queue drops and zero DMA overflows
 in the observed run. These measurements are specific to this model/core/build;
 repeat them after changing the architecture or frontend. Fresh on-device

@@ -620,3 +620,30 @@ Do not include Thread credentials or device storage.
   fresh excerpt, retaining both models' action outcomes. An isolated C6 firmware
   build passed with the immediate policy and shadow mode off. No new model has
   been flashed at this point.
+
+### 2026-10-25: conservative model installed and physical pair trial
+
+- On operator instruction, uploaded the verified conservative standard-CNN
+  image with the immediate-pair policy and shadow mode off. Upload hash
+  verification and frontend/inference startup self-tests passed. Tensor arena
+  use remains 3,052 bytes with 8,192 reserved; the model remains 9,944 bytes.
+- Matter commissioning was preserved and Thread connected as a router. Status
+  confirmed the expected model, cutoff and policy, with no queue drops or DMA
+  overflows. Kept both the original exact-two firmware and original-model
+  faster-response firmware privately for rollback.
+- The live log recorded five distinct Matter clicks during the five-attempt
+  double-clap trial. The operator confirmed that all five toggled the lamps
+  perfectly. The podcast was paused during these attempts; this interval is
+  positive-test evidence only, not a podcast false-trigger trial.
+- After the operator explicitly confirmed playback, observed another 180.7
+  seconds of podcast audio with no deliberate claps. Four candidate windows
+  were accepted, but none formed an activating pair: zero additional Matter
+  clicks. Excluded the earlier paused interval from this negative trial.
+- End status showed 2,232 classified candidates, peak queue depth 12 of 16,
+  zero queue drops, zero DMA overflows and no inference failure. Heap was
+  99,684 bytes free with an 83,256-byte minimum. Observed frontend/inference
+  wall-time peaks were 36.642/16.278 ms, including preemption; typical work
+  remained about 20/6 ms. Diagnostics were disabled and the USB monitor closed.
+- Left the conservative trial installed. These five positive attempts and
+  three minutes of confirmed playback are initial observations, not evidence
+  that false triggers have been eliminated in longer ordinary use.
